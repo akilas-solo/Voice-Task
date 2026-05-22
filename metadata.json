@@ -1,0 +1,6 @@
+{
+  "name": "VoisTask",
+  "description": "VoisTask is a gorgeous voice task and memo manager with custom themes, sidebar navigation, searchable categorization, and secure local backups.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
