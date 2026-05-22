@@ -52,6 +52,8 @@ class VoiceTaskRepository(private val voiceTaskDao: VoiceTaskDao) {
                 if (task.reminderTime != null) {
                     put("reminderTime", task.reminderTime)
                 }
+                put("alertSound", task.alertSound)
+                put("iconName", task.iconName)
             }
             rootArray.put(obj)
         }
@@ -74,7 +76,9 @@ class VoiceTaskRepository(private val voiceTaskDao: VoiceTaskDao) {
                     isCompleted = obj.optBoolean("isCompleted", false),
                     createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
                     isSynced = obj.optBoolean("isSynced", false),
-                    reminderTime = if (obj.has("reminderTime")) obj.optLong("reminderTime") else null
+                    reminderTime = if (obj.has("reminderTime")) obj.optLong("reminderTime") else null,
+                    alertSound = obj.optString("alertSound", "App Default"),
+                    iconName = obj.optString("iconName", "Mic")
                 )
                 voiceTaskDao.insertTask(task)
             }

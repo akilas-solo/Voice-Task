@@ -29,6 +29,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.spring
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.filled.*
@@ -80,7 +82,210 @@ class MainActivity : ComponentActivity() {
             }
 
             MyApplicationTheme(darkTheme = isDark) {
-                MainLayout(viewModel = viewModel)
+                val isSecurityEnabled = remember {
+                    try {
+                        com.example.BuildConfig.SECURITY_MODE_ENABLED.toBoolean()
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+                val securePasscode = remember {
+                    try {
+                        com.example.BuildConfig.APP_SECURE_PASSCODE.ifBlank { "1234" }
+                    } catch (e: Exception) {
+                        "1234"
+                    }
+                }
+
+                var isUnlocked by remember { mutableStateOf(!isSecurityEnabled) }
+
+                if (!isUnlocked) {
+                    AppPasscodeLockScreen(
+                        correctPasscode = securePasscode,
+                        onUnlockSuccess = {
+                            isUnlocked = true
+                        }
+                    )
+                } else {
+                    MainLayout(viewModel = viewModel)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AppPasscodeLockScreen(
+    correctPasscode: String,
+    onUnlockSuccess: () -> Unit
+) {
+    var enteredPin by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf("") }
+    var isError by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp)
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = "Lock",
+                tint = if (isError) Color.Red else MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .size(64.dp)
+                    .padding(bottom = 16.dp)
+            )
+
+            Text(
+                text = "VoisTask Vault Lock",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Enter a valid 4-digit PIN to access local database",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Indicator Dots
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for (i in 1..4) {
+                    val active = enteredPin.length >= i
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(
+                                color = if (isError) {
+                                    Color.Red
+                                } else if (active) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.2f)
+                                }
+                            )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (errorMessage.isNotEmpty()) {
+                Text(
+                    text = errorMessage,
+                    color = Color.Red,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Numeric Keypad
+            Column(
+                modifier = Modifier.widthIn(max = 280.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                val buttons = listOf(
+                    listOf("1", "2", "3"),
+                    listOf("4", "5", "6"),
+                    listOf("7", "8", "9"),
+                    listOf("Clear", "0", "Delete")
+                )
+
+                buttons.forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        row.forEach { digit ->
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        color = if (digit == "Clear" || digit == "Delete") {
+                                            Color.Transparent
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                        }
+                                    )
+                                    .clickable {
+                                        if (isError) {
+                                            isError = false
+                                            errorMessage = ""
+                                        }
+
+                                        when (digit) {
+                                            "Clear" -> enteredPin = ""
+                                            "Delete" -> {
+                                                if (enteredPin.isNotEmpty()) {
+                                                    enteredPin = enteredPin.dropLast(1)
+                                                }
+                                            }
+                                            else -> {
+                                                if (enteredPin.length < 4) {
+                                                    enteredPin += digit
+                                                    if (enteredPin.length == 4) {
+                                                        if (enteredPin == correctPasscode) {
+                                                            onUnlockSuccess()
+                                                        } else {
+                                                            isError = true
+                                                            errorMessage = "Access Denied. Incorrect Passcode."
+                                                            enteredPin = ""
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                when (digit) {
+                                    "Clear" -> Text(
+                                        text = "CLR",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    "Delete" -> Icon(
+                                        imageVector = Icons.Default.Backspace,
+                                        contentDescription = "Backspace",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    else -> Text(
+                                        text = digit,
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -124,12 +329,33 @@ fun MainLayout(viewModel: VoiceTaskViewModel) {
     // Check system level notifications / reminder Popups
     val activeReminder = viewModel.activeReminderInApp
     if (activeReminder != null) {
-        // Trigger generic ringtone chime
+        // Trigger generic ringtone chime or custom chime tones based on user interest
         LaunchedEffect(activeReminder) {
             try {
-                val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                val r = RingtoneManager.getRingtone(context, notification)
-                r.play()
+                when (activeReminder.alertSound) {
+                    "Zen Bowl Resonance" -> {
+                        val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+                        tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 500)
+                    }
+                    "Digital Beep Pitch" -> {
+                        val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+                        tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 400)
+                    }
+                    "Play Saved Task Audio" -> {
+                        if (activeReminder.audioPath != null) {
+                            viewModel.playVoiceMemo(activeReminder)
+                        } else {
+                            val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                            val r = RingtoneManager.getRingtone(context, notification)
+                            r.play()
+                        }
+                    }
+                    else -> {
+                        val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                        val r = RingtoneManager.getRingtone(context, notification)
+                        r.play()
+                    }
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -165,6 +391,27 @@ fun MainLayout(viewModel: VoiceTaskViewModel) {
                             style = MaterialTheme.typography.bodySmall, 
                             color = MaterialTheme.colorScheme.secondary
                         )
+                    }
+                    
+                    if (activeReminder.audioPath != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        val isPlayingThis = viewModel.playingTaskId == activeReminder.id
+                        Button(
+                            onClick = { viewModel.playVoiceMemo(activeReminder) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                contentColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = if (isPlayingThis && viewModel.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(if (isPlayingThis && viewModel.isPlaying) "Pause Voice Memo" else "Play Voice Memo", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             },
@@ -528,122 +775,145 @@ fun MainLayout(viewModel: VoiceTaskViewModel) {
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(paddingValues)
-                        .background(MaterialTheme.colorScheme.background)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.background,
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.TopCenter
                 ) {
-                    when (currentScreen) {
-                        VoiceTaskViewModel.Screen.MEMOS -> {
-                            Column(modifier = Modifier.fillMaxSize()) {
-                                // Search bar
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedTextField(
-                                        value = searchQuery,
-                                        onValueChange = { viewModel.setSearchQuery(it) },
-                                        placeholder = { Text("Search memos, notes, or tags...") },
-                                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = "SearchIcon") },
-                                        trailingIcon = {
-                                            if (searchQuery.isNotEmpty()) {
-                                                IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                                                    Icon(Icons.Default.Clear, contentDescription = "Clear search")
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .widthIn(max = 750.dp)
+                    ) {
+                        AnimatedContent(
+                            targetState = currentScreen,
+                            transitionSpec = {
+                                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
+                            },
+                            label = "screen_navigation_fade",
+                            modifier = Modifier.fillMaxSize()
+                        ) { targetScreen ->
+                            when (targetScreen) {
+                                VoiceTaskViewModel.Screen.MEMOS -> {
+                                    Column(modifier = Modifier.fillMaxSize()) {
+                                        // Search bar
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            OutlinedTextField(
+                                                value = searchQuery,
+                                                onValueChange = { viewModel.setSearchQuery(it) },
+                                                placeholder = { Text("Search memos, notes, or tags...") },
+                                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "SearchIcon") },
+                                                trailingIcon = {
+                                                    if (searchQuery.isNotEmpty()) {
+                                                        IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                                                            Icon(Icons.Default.Clear, contentDescription = "Clear search")
+                                                        }
+                                                    }
+                                                },
+                                                singleLine = true,
+                                                shape = RoundedCornerShape(24.dp),
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                                    unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                                                ),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("search_bar")
+                                            )
+                                        }
+
+                                        // Categories tabs (Horizontal layout)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp)
+                                                .horizontalScroll(rememberScrollState())
+                                                .padding(horizontal = 16.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            // "All" pill
+                                            ElevatedFilterChip(
+                                                selected = selectedCategory == "All",
+                                                onClick = { viewModel.selectCategory("All") },
+                                                label = { Text("All Memos") }
+                                            )
+                                            categories.forEach { cat ->
+                                                ElevatedFilterChip(
+                                                    selected = selectedCategory == cat,
+                                                    onClick = { viewModel.selectCategory(cat) },
+                                                    label = { Text(cat) }
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        // List of tasks
+                                        if (filteredTasks.isEmpty()) {
+                                            EmptyMemosState()
+                                        } else {
+                                            LazyColumn(
+                                                contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 84.dp),
+                                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                                modifier = Modifier.fillMaxSize()
+                                            ) {
+                                                items(filteredTasks, key = { it.id }) { task ->
+                                                    VoiceTaskCard(
+                                                        task = task,
+                                                        viewModel = viewModel,
+                                                        onDelete = { viewModel.deleteTask(task) },
+                                                        onCompleteToggle = { viewModel.toggleTaskCompletion(task) }
+                                                    )
                                                 }
                                             }
-                                        },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(24.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                            unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                                        ),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("search_bar")
-                                    )
-                                }
-
-                                // Categories tabs (Horizontal layout)
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp)
-                                        .horizontalScroll(rememberScrollState())
-                                        .padding(horizontal = 16.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    // "All" pill
-                                    ElevatedFilterChip(
-                                        selected = selectedCategory == "All",
-                                        onClick = { viewModel.selectCategory("All") },
-                                        label = { Text("All Memos") }
-                                    )
-                                    categories.forEach { cat ->
-                                        ElevatedFilterChip(
-                                            selected = selectedCategory == cat,
-                                            onClick = { viewModel.selectCategory(cat) },
-                                            label = { Text(cat) }
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                // List of tasks
-                                if (filteredTasks.isEmpty()) {
-                                    EmptyMemosState()
-                                } else {
-                                    LazyColumn(
-                                        contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 84.dp),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                                        modifier = Modifier.fillMaxSize()
-                                    ) {
-                                        items(filteredTasks, key = { it.id }) { task ->
-                                            VoiceTaskCard(
-                                                task = task,
-                                                viewModel = viewModel,
-                                                onDelete = { viewModel.deleteTask(task) },
-                                                onCompleteToggle = { viewModel.toggleTaskCompletion(task) }
-                                            )
                                         }
                                     }
                                 }
+                                VoiceTaskViewModel.Screen.FOLDERS -> {
+                                    FoldersManagerScreen(viewModel = viewModel)
+                                }
+                                VoiceTaskViewModel.Screen.COLLABORATION -> {
+                                    CollaborationScreen(viewModel = viewModel)
+                                }
+                                VoiceTaskViewModel.Screen.BACKUP_RESTORE -> {
+                                    BackupRestoreScreen(viewModel = viewModel)
+                                }
+                                VoiceTaskViewModel.Screen.USER_GUIDE -> {
+                                    UserGuideScreen()
+                                }
+                                VoiceTaskViewModel.Screen.FEEDBACK -> {
+                                    FeedbackScreen(viewModel = viewModel)
+                                }
                             }
                         }
-                        VoiceTaskViewModel.Screen.FOLDERS -> {
-                            FoldersManagerScreen(viewModel = viewModel)
-                        }
-                        VoiceTaskViewModel.Screen.COLLABORATION -> {
-                            CollaborationScreen(viewModel = viewModel)
-                        }
-                        VoiceTaskViewModel.Screen.BACKUP_RESTORE -> {
-                            BackupRestoreScreen(viewModel = viewModel)
-                        }
-                        VoiceTaskViewModel.Screen.USER_GUIDE -> {
-                            UserGuideScreen()
-                        }
-                        VoiceTaskViewModel.Screen.FEEDBACK -> {
-                            FeedbackScreen(viewModel = viewModel)
-                        }
-                    }
 
-                    // Bottom sheet wrapper for recording dialog
-                    if (showRecordSheet) {
-                        VoiceRecordSheet(
-                            viewModel = viewModel,
-                            onDismiss = { showRecordSheet = false }
-                        )
-                    }
+                        // Bottom sheet wrapper for recording dialog
+                        if (showRecordSheet) {
+                            VoiceRecordSheet(
+                                viewModel = viewModel,
+                                onDismiss = { showRecordSheet = false }
+                            )
+                        }
 
-                    // Text Note / Quick Add Dialog
-                    if (showQuickAddDialog) {
-                        QuickAddNoteDialog(
-                            viewModel = viewModel,
-                            onDismiss = { showQuickAddDialog = false }
-                        )
+                        // Text Note / Quick Add Dialog
+                        if (showQuickAddDialog) {
+                            QuickAddNoteDialog(
+                                viewModel = viewModel,
+                                onDismiss = { showQuickAddDialog = false }
+                            )
+                        }
                     }
                 }
             }
@@ -692,6 +962,138 @@ fun EmptyMemosState() {
 }
 
 @Composable
+fun TaskIconSelector(
+    selectedIcon: String,
+    onIconSelected: (String) -> Unit
+) {
+    val icons = listOf(
+        "Mic" to androidx.compose.material.icons.Icons.Default.Mic,
+        "Work" to androidx.compose.material.icons.Icons.Default.Work,
+        "Personal" to androidx.compose.material.icons.Icons.Default.Person,
+        "Idea" to androidx.compose.material.icons.Icons.Default.Star,
+        "Call" to androidx.compose.material.icons.Icons.Default.Call,
+        "Bookmark" to androidx.compose.material.icons.Icons.Default.Bookmark,
+        "Shopping" to androidx.compose.material.icons.Icons.Default.ShoppingCart
+    )
+    
+    Column {
+        Text(
+            text = "Select Task Icon:",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            icons.forEach { (name, icon) ->
+                val isSelected = selectedIcon == name
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        )
+                        .clickable { onIconSelected(name) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = name,
+                        tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SoundAlertSelector(
+    selectedSound: String,
+    onSoundSelected: (String) -> Unit,
+    hasAudio: Boolean
+) {
+    val sounds = if (hasAudio) {
+        listOf("App Default", "Zen Bowl Resonance", "Digital Beep Pitch", "Play Saved Task Audio")
+    } else {
+        listOf("App Default", "Zen Bowl Resonance", "Digital Beep Pitch")
+    }
+
+    Column {
+        Text(
+            text = "Alert Chime Sound (played on reminder):",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            sounds.forEach { name ->
+                val isSelected = selectedSound == name
+                Box(
+                    modifier = Modifier
+                        .background(
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        .clickable { onSoundSelected(name) }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val icon = when (name) {
+                            "App Default" -> androidx.compose.material.icons.Icons.Default.Notifications
+                            "Zen Bowl Resonance" -> androidx.compose.material.icons.Icons.Default.VolumeUp
+                            "Digital Beep Pitch" -> androidx.compose.material.icons.Icons.Default.NotificationsActive
+                            else -> androidx.compose.material.icons.Icons.Default.Mic
+                        }
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = name,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun getIconForName(iconName: String): androidx.compose.ui.graphics.vector.ImageVector {
+    return when (iconName) {
+        "Work" -> androidx.compose.material.icons.Icons.Default.Work
+        "Personal" -> androidx.compose.material.icons.Icons.Default.Person
+        "Idea" -> androidx.compose.material.icons.Icons.Default.Star
+        "Call" -> androidx.compose.material.icons.Icons.Default.Call
+        "Bookmark" -> androidx.compose.material.icons.Icons.Default.Bookmark
+        "Shopping" -> androidx.compose.material.icons.Icons.Default.ShoppingCart
+        else -> androidx.compose.material.icons.Icons.Default.Mic
+    }
+}
+
+@Composable
 fun VoiceTaskCard(
     task: VoiceTask,
     viewModel: VoiceTaskViewModel,
@@ -703,8 +1105,12 @@ fun VoiceTaskCard(
     var showEditMenu by remember { mutableStateOf(false) }
     var renameTitle by remember { mutableStateOf(task.title) }
     var renameNotes by remember { mutableStateOf(task.notes) }
+    var renameIcon by remember { mutableStateOf(task.iconName) }
+    var renameAlertSound by remember { mutableStateOf(task.alertSound) }
     var isEditing by remember { mutableStateOf(false) }
     var showAlarmChangeDialog by remember { mutableStateOf(false) }
+    var isCardExpanded by remember { mutableStateOf(false) }
+    val isExpanded = isCardExpanded || isPlayingThis || isEditing
 
     if (showAlarmChangeDialog) {
         AlertDialog(
@@ -738,7 +1144,7 @@ fun VoiceTaskCard(
                                         else -> 600000L
                                     }
                                     val newReminderTime = System.currentTimeMillis() + addedMs
-                                    viewModel.updateTask(task.copy(reminderTime = newReminderTime))
+                                    viewModel.updateTask(task.copy(reminderTime = newReminderTime, alertSound = renameAlertSound))
                                     showAlarmChangeDialog = false
                                     Toast.makeText(context, "Alarm scheduled in $durationStr!", Toast.LENGTH_SHORT).show()
                                 },
@@ -748,6 +1154,12 @@ fun VoiceTaskCard(
                             }
                         }
                     }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    SoundAlertSelector(
+                        selectedSound = renameAlertSound,
+                        onSoundSelected = { renameAlertSound = it },
+                        hasAudio = (task.audioPath != null)
+                    )
                 }
             },
             confirmButton = {
@@ -770,18 +1182,27 @@ fun VoiceTaskCard(
     }
 
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (task.isCompleted) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.03f)
             } else {
                 MaterialTheme.colorScheme.surface
             }
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isExpanded) 5.dp else 1.dp),
+        border = BorderStroke(
+            width = if (isExpanded) 1.5.dp else 1.dp,
+            color = if (isExpanded) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+            }
+        ),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("task_card_${task.id}")
+            .clickable { isCardExpanded = !isCardExpanded }
     ) {
         Column(
             modifier = Modifier
@@ -806,6 +1227,15 @@ fun VoiceTaskCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     
+                    Icon(
+                        imageVector = getIconForName(task.iconName),
+                        contentDescription = "Task Category Icon",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .size(20.dp)
+                    )
+                    
                     if (isEditing) {
                         OutlinedTextField(
                             value = renameTitle,
@@ -815,23 +1245,68 @@ fun VoiceTaskCard(
                             modifier = Modifier.fillMaxWidth()
                         )
                     } else {
-                        Text(
-                            text = task.title,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = if (task.isCompleted) {
-                                MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
-                            } else {
-                                MaterialTheme.colorScheme.onBackground
+                        Column {
+                            Text(
+                                text = task.title,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (task.isCompleted) {
+                                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+                                } else {
+                                    MaterialTheme.colorScheme.onBackground
+                                }
+                            )
+                            if (!isExpanded) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (task.audioPath != null) {
+                                        Icon(
+                                            imageVector = Icons.Default.VolumeUp,
+                                            contentDescription = "Has Voice Recording",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                        Text(
+                                            text = formatTimerLabel(task.audioDurationMs),
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    if (task.reminderTime != null) {
+                                        Icon(
+                                            imageVector = Icons.Default.NotificationsActive,
+                                            contentDescription = "Has Set Alarm",
+                                            tint = Color(0xFFD4AF37),
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                        Text(
+                                            text = "Alarm Active",
+                                            fontSize = 11.sp,
+                                            color = Color(0xFFD4AF37),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    if (task.notes.isNotBlank() && task.audioPath == null) {
+                                        Text(
+                                            text = if (task.notes.length > 25) task.notes.take(25) + "..." else task.notes,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                }
                             }
-                        )
+                        }
                     }
                 }
 
                 // Actions Menu button
-                Box {
+                Box(modifier = Modifier.clickable(enabled = false) {}) {
                     IconButton(onClick = { showEditMenu = true }) {
                         Icon(imageVector = Icons.Default.MoreVert, contentDescription = "More")
                     }
@@ -879,224 +1354,253 @@ fun VoiceTaskCard(
                 }
             }
 
-            // Expanded edit text fields or read-only notes output
-            if (isEditing) {
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = renameNotes,
-                    onValueChange = { renameNotes = it },
-                    label = { Text("Memo Notes & Transcriptions") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    horizontalArrangement = Arrangement.End,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    TextButton(onClick = { isEditing = false }) {
-                        Text("Cancel")
-                    }
-                    Button(
-                        onClick = {
-                            viewModel.updateTask(
-                                task.copy(
-                                    title = renameTitle.ifBlank { "Untitled Note" },
-                                    notes = renameNotes
-                                )
-                            )
-                            isEditing = false
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically(animationSpec = spring(dampingRatio = 0.85f)) + fadeIn(),
+                exit = shrinkVertically(animationSpec = spring(dampingRatio = 0.85f)) + fadeOut()
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (isEditing) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = renameNotes,
+                            onValueChange = { renameNotes = it },
+                            label = { Text("Memo Notes & Transcriptions") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TaskIconSelector(
+                            selectedIcon = renameIcon,
+                            onIconSelected = { renameIcon = it }
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SoundAlertSelector(
+                            selectedSound = renameAlertSound,
+                            onSoundSelected = { renameAlertSound = it },
+                            hasAudio = (task.audioPath != null)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.End,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            TextButton(onClick = { isEditing = false }) {
+                                Text("Cancel")
+                            }
+                            Button(
+                                onClick = {
+                                    viewModel.updateTask(
+                                        task.copy(
+                                            title = renameTitle.ifBlank { "Untitled Note" },
+                                            notes = renameNotes,
+                                            iconName = renameIcon,
+                                            alertSound = renameAlertSound
+                                        )
+                                    )
+                                    isEditing = false
+                                }
+                            ) {
+                                Text("Save Changes")
+                            }
                         }
-                    ) {
-                        Text("Save Changes")
+                    } else {
+                        if (task.notes.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "TRANSCRIPTION & NOTES",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = task.notes,
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
                     }
-                }
-            } else {
-                if (task.notes.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = task.notes,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(start = 12.dp)
-                    )
-                }
-            }
 
-            if (task.reminderTime != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .padding(start = 12.dp)
-                        .background(
-                            color = Color(0xFFD4AF37).copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        .border(
-                            width = 1.dp,
-                            color = Color(0xFFD4AF37).copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        .clickable { showAlarmChangeDialog = true }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.NotificationsActive,
-                        contentDescription = "Active Alarm",
-                        tint = Color(0xFFD4AF37),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    val formatter = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
-                    Text(
-                        text = "Alarm: ${formatter.format(Date(task.reminderTime!!))}",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFD4AF37)
-                    )
-                }
-            }
-
-            // Audio Player controls if file exists!
-            if (task.audioPath != null) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { viewModel.playVoiceMemo(task) },
-                            modifier = Modifier.testTag("play_btn_${task.id}")
+                    if (task.reminderTime != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .padding(start = 4.dp)
+                                .background(
+                                    color = Color(0xFFD4AF37).copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = Color(0xFFD4AF37).copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable { showAlarmChangeDialog = true }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Icon(
-                                imageVector = if (isPlayingThis && viewModel.isPlaying) {
-                                    Icons.Default.Pause
-                                } else {
-                                    Icons.Default.PlayArrow
-                                },
-                                contentDescription = "Play/Pause Memo",
-                                tint = MaterialTheme.colorScheme.primary
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = "Active Alarm",
+                                tint = Color(0xFFD4AF37),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            val formatter = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
+                            Text(
+                                text = "Alarm: ${formatter.format(Date(task.reminderTime!!))}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFD4AF37)
                             )
                         }
+                    }
 
-                        // Progress Line
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 8.dp)
+                    if (task.audioPath != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            if (isPlayingThis) {
-                                Slider(
-                                    value = viewModel.playbackProgress,
-                                    onValueChange = { viewModel.seekPlayback(it) },
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = MaterialTheme.colorScheme.primary,
-                                        activeTrackColor = MaterialTheme.colorScheme.primary
-                                    )
-                                )
-                            } else {
-                                LinearProgressIndicator(
-                                    progress = { 0f },
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(4.dp)
-                                )
-                            }
-                            
-                            // Timer display
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                val currentLabel = if (isPlayingThis) {
-                                    formatTimerLabel(viewModel.playbackPositionMs)
-                                } else {
-                                    "00:00"
-                                }
-                                Text(
-                                    text = currentLabel,
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                )
-                                Text(
-                                    text = formatTimerLabel(task.audioDurationMs),
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Badges (Tag & Folder information!)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // Folder/Category
-                    SuggestionChip(
-                        onClick = { viewModel.selectCategory(task.category) },
-                        label = { Text(task.category, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                        modifier = Modifier.height(28.dp)
-                    )
-
-                    // Tags
-                    if (task.tags.isNotBlank()) {
-                        task.tags.split(",").forEach { tag ->
-                            if (tag.trim().isNotEmpty()) {
-                                Box(
-                                    modifier = Modifier
-                                        .background(
-                                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
-                                            shape = RoundedCornerShape(12.dp)
-                                        )
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                IconButton(
+                                    onClick = { viewModel.playVoiceMemo(task) },
+                                    modifier = Modifier.testTag("play_btn_${task.id}")
                                 ) {
-                                    Text(
-                                        text = "#${tag.trim()}",
-                                        fontSize = 10.sp,
-                                        color = MaterialTheme.colorScheme.secondary,
-                                        fontWeight = FontWeight.Bold
+                                    Icon(
+                                        imageVector = if (isPlayingThis && viewModel.isPlaying) {
+                                            Icons.Default.Pause
+                                        } else {
+                                            Icons.Default.PlayArrow
+                                        },
+                                        contentDescription = "Play/Pause Memo",
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
+
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 8.dp)
+                                ) {
+                                    if (isPlayingThis) {
+                                        Slider(
+                                            value = viewModel.playbackProgress,
+                                            onValueChange = { viewModel.seekPlayback(it) },
+                                            colors = SliderDefaults.colors(
+                                                thumbColor = MaterialTheme.colorScheme.primary,
+                                                activeTrackColor = MaterialTheme.colorScheme.primary
+                                            )
+                                        )
+                                    } else {
+                                        LinearProgressIndicator(
+                                            progress = { 0f },
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(4.dp)
+                                        )
+                                    }
+                                    
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        val currentLabel = if (isPlayingThis) {
+                                            formatTimerLabel(viewModel.playbackPositionMs)
+                                        } else {
+                                            "00:00"
+                                        }
+                                        Text(
+                                            text = currentLabel,
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        )
+                                        Text(
+                                            text = formatTimerLabel(task.audioDurationMs),
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-                }
 
-                // Ledger sync status icon
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (task.isSynced) {
-                        Icon(
-                            imageVector = Icons.Default.CloudQueue,
-                            contentDescription = "Synced",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Cloud Syned", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.CloudOff,
-                            contentDescription = "Offline only",
-                            tint = Color.Gray,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Offline Local", fontSize = 10.sp, color = Color.Gray)
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SuggestionChip(
+                                onClick = { viewModel.selectCategory(task.category) },
+                                label = { Text(task.category, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                modifier = Modifier.height(28.dp)
+                            )
+
+                            if (task.tags.isNotBlank()) {
+                                task.tags.split(",").forEach { tag ->
+                                    if (tag.trim().isNotEmpty()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .background(
+                                                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
+                                                    shape = RoundedCornerShape(12.dp)
+                                                )
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "#${tag.trim()}",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.secondary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (task.isSynced) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudQueue,
+                                    contentDescription = "Synced",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Synced", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.CloudOff,
+                                    contentDescription = "Offline only",
+                                    tint = Color.Gray,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Local", fontSize = 10.sp, color = Color.Gray)
+                            }
+                        }
                     }
                 }
             }
@@ -1122,6 +1626,8 @@ fun VoiceRecordSheet(
     var memoNotes by remember { mutableStateOf("") }
     var memoCategory by remember { mutableStateOf("Inbox") }
     var memoTags by remember { mutableStateOf("") }
+    var memoIcon by remember { mutableStateOf("Mic") }
+    var memoAlertSound by remember { mutableStateOf("App Default") }
 
     // Selected folders list lookup
     val categories by viewModel.categories.collectAsStateWithLifecycle()
@@ -1248,7 +1754,9 @@ fun VoiceRecordSheet(
                                     notes = memoNotes,
                                     category = memoCategory,
                                     tags = memoTags,
-                                    reminderTime = reminderTime
+                                    reminderTime = reminderTime,
+                                    alertSound = memoAlertSound,
+                                    iconName = memoIcon
                                 )
                                 onDismiss()
                             },
@@ -1359,7 +1867,20 @@ fun VoiceRecordSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+                TaskIconSelector(
+                    selectedIcon = memoIcon,
+                    onIconSelected = { memoIcon = it }
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+                SoundAlertSelector(
+                    selectedSound = memoAlertSound,
+                    onSoundSelected = { memoAlertSound = it },
+                    hasAudio = true
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Reminder selector button
                 Row(
@@ -1449,6 +1970,8 @@ fun QuickAddNoteDialog(
     var notes by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Inbox") }
     var tags by remember { mutableStateOf("") }
+    var selectedIcon by remember { mutableStateOf("Work") }
+    var selectedAlertSound by remember { mutableStateOf("App Default") }
     
     val categories by viewModel.categories.collectAsStateWithLifecycle()
     var showFoldersMenu by remember { mutableStateOf(false) }
@@ -1515,7 +2038,20 @@ fun QuickAddNoteDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+                TaskIconSelector(
+                    selectedIcon = selectedIcon,
+                    onIconSelected = { selectedIcon = it }
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+                SoundAlertSelector(
+                    selectedSound = selectedAlertSound,
+                    onSoundSelected = { selectedAlertSound = it },
+                    hasAudio = false
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Reminder alarm row for text notes!
                 Row(
@@ -1582,7 +2118,7 @@ fun QuickAddNoteDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    viewModel.addTask(title, notes, category, tags, reminderTime)
+                    viewModel.addTask(title, notes, category, tags, reminderTime, selectedAlertSound, selectedIcon)
                     onDismiss()
                 }
             ) {

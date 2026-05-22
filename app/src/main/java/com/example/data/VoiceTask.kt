@@ -15,5 +15,7 @@ data class VoiceTask(
     val isCompleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val isSynced: Boolean = false, // Track simulated cloud sync status
-    val reminderTime: Long? = null // Milliseconds timestamp for scheduled reminder notifications
+    val reminderTime: Long? = null, // Milliseconds timestamp for scheduled reminder notifications
+    val alertSound: String = "App Default", // "App Default", "Zen Bowl Resonance", "Digital Beep Pitch", "Play Saved Task Audio"
+    val iconName: String = "Mic" // "Mic", "Work", "Personal", "Idea", "Call", "Bookmark", "Shopping"
 )

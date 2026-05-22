@@ -169,7 +169,15 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun stopRecording(title: String, notes: String, category: String, tags: String, reminderTime: Long? = null) {
+    fun stopRecording(
+        title: String,
+        notes: String,
+        category: String,
+        tags: String,
+        reminderTime: Long? = null,
+        alertSound: String = "App Default",
+        iconName: String = "Mic"
+    ) {
         if (!isRecording) return
         
         recordTimerJob?.cancel()
@@ -199,7 +207,9 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                     audioDurationMs = duration,
                     category = category.ifBlank { "Inbox" },
                     tags = tags,
-                    reminderTime = reminderTime
+                    reminderTime = reminderTime,
+                    alertSound = alertSound,
+                    iconName = iconName
                 )
                 repository.insertTask(task)
             }
@@ -383,7 +393,9 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         notes: String,
         category: String,
         tags: String,
-        reminderTime: Long? = null
+        reminderTime: Long? = null,
+        alertSound: String = "App Default",
+        iconName: String = "Mic"
     ) {
         viewModelScope.launch {
             val task = VoiceTask(
@@ -391,7 +403,9 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                 notes = notes,
                 category = category.ifBlank { "Inbox" },
                 tags = tags,
-                reminderTime = reminderTime
+                reminderTime = reminderTime,
+                alertSound = alertSound,
+                iconName = iconName
             )
             repository.insertTask(task)
         }
