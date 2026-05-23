@@ -507,7 +507,8 @@ fun MainLayout(viewModel: VoiceTaskViewModel) {
                             Triple(VoiceTaskViewModel.Screen.COLLABORATION, Icons.Default.Share, "Collab"),
                             Triple(VoiceTaskViewModel.Screen.BACKUP_RESTORE, Icons.Default.Backup, "Backups"),
                             Triple(VoiceTaskViewModel.Screen.FEEDBACK, Icons.Default.Feedback, "Feedback"),
-                            Triple(VoiceTaskViewModel.Screen.USER_GUIDE, Icons.AutoMirrored.Filled.Help, "Help")
+                            Triple(VoiceTaskViewModel.Screen.USER_GUIDE, Icons.AutoMirrored.Filled.Help, "Help"),
+                            Triple(VoiceTaskViewModel.Screen.SETTINGS, Icons.Default.Settings, "Settings")
                         )
 
                         screens.forEach { (scr, icon, lbl) ->
@@ -666,6 +667,22 @@ fun MainLayout(viewModel: VoiceTaskViewModel) {
                         modifier = Modifier.padding(horizontal = 12.dp).testTag("drawer_guide")
                     )
 
+                    NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                        label = { Text("App Settings & Preferences") },
+                        selected = currentScreen == VoiceTaskViewModel.Screen.SETTINGS,
+                        onClick = {
+                            viewModel.navigateTo(VoiceTaskViewModel.Screen.SETTINGS)
+                            scope.launch { drawerState.close() }
+                        },
+                        colors = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.padding(horizontal = 12.dp).testTag("drawer_settings")
+                    )
+
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                     
                     Text(
@@ -756,6 +773,19 @@ fun MainLayout(viewModel: VoiceTaskViewModel) {
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
+                            }
+                            IconButton(onClick = {
+                                if (currentScreen == VoiceTaskViewModel.Screen.SETTINGS) {
+                                    viewModel.navigateTo(VoiceTaskViewModel.Screen.MEMOS)
+                                } else {
+                                    viewModel.navigateTo(VoiceTaskViewModel.Screen.SETTINGS)
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = if (currentScreen == VoiceTaskViewModel.Screen.SETTINGS) Icons.Default.Home else Icons.Default.Settings,
+                                    contentDescription = "Toggle Settings",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
                             }
                         },
                         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -922,6 +952,9 @@ fun MainLayout(viewModel: VoiceTaskViewModel) {
                                 }
                                 VoiceTaskViewModel.Screen.FEEDBACK -> {
                                     FeedbackScreen(viewModel = viewModel)
+                                }
+                                VoiceTaskViewModel.Screen.SETTINGS -> {
+                                    SettingsScreen(viewModel = viewModel)
                                 }
                             }
                         }
@@ -2963,5 +2996,339 @@ fun UserGuideScreen() {
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(viewModel: VoiceTaskViewModel) {
+    val context = LocalContext.current
+    val allTasks by viewModel.allTasks.collectAsStateWithLifecycle()
+    
+    // Refresh cache stats when screen is loaded
+    LaunchedEffect(Unit) {
+        viewModel.refreshCacheStats()
+    }
+    
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Upper Title
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "System Preferences & Settings",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        
+        Text(
+            text = "Configure dynamic recording, sound alerts, layout themes, and external cloud integrations safely.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+        )
+        
+        HorizontalDivider()
+
+        // Section 1: UI Theme Controller
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Central Custom Visual Appearance", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("System", "Light", "Dark").forEach { opt ->
+                        ElevatedFilterChip(
+                            selected = viewModel.themeOption == opt,
+                            onClick = { 
+                                viewModel.changeThemeOption(opt)
+                                Toast.makeText(context, "$opt visual style loaded!", Toast.LENGTH_SHORT).show()
+                            },
+                            label = { Text(opt, fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f).testTag("settings_theme_btn_$opt")
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Loaded theme modifies elements, checklists, and background gradients automatically.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+        }
+
+        // Section 2: Recording Quality settings
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.VolumeUp, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Audio Compression Quality", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("High", "Standard", "Saver").forEach { quality ->
+                        val label = when(quality) {
+                            "High" -> "High (AAC HD)"
+                            "Standard" -> "Standard (AAC)"
+                            else -> "Battery Saver (AMR)"
+                        }
+                        ElevatedFilterChip(
+                            selected = viewModel.audioQuality == quality,
+                            onClick = { 
+                                viewModel.changeAudioQuality(quality)
+                                Toast.makeText(context, "Audio engine switches to $quality format parameters.", Toast.LENGTH_SHORT).show()
+                            },
+                            label = { Text(label, fontSize = 10.sp) },
+                            modifier = Modifier.weight(1f).testTag("audio_quality_$quality")
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = when(viewModel.audioQuality) {
+                        "High" -> "🔥 Dynamic HD: 44.1 kHz sampling rate, 96 kbps stereo AAC encoder. Crystal-clear transcripts and playback fidelity."
+                        "Standard" -> "⚡ Balanced: 16 kHz sampling rate, 24 kbps AAC encoder. Optimal size-to-quality ratio for brief reminder memos."
+                        else -> "🔋 Efficient AMR: 8 kHz compression parameters. Ideal for long, continuous, resource-friendly recording feeds."
+                    },
+                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Section 3: Extra in-app preferences
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Haptic & Gesture Interactions", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Toggle vibration
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Record Vibration Feedback", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Give a brief haptic vibration pulse when record starts/finishes.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    }
+                    Switch(
+                        checked = viewModel.enableVibration,
+                        onCheckedChange = { viewModel.toggleVibration() }
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Toggle autoplay after record
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Immediate Recording Autoplay", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Auto-plays your recorded speech memos immediately after saving.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    }
+                    Switch(
+                        checked = viewModel.autoPlayAfterRecording,
+                        onCheckedChange = { viewModel.toggleAutoPlay() }
+                    )
+                }
+            }
+        }
+
+        // Section 4: Cache & Storage stats
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Localized Ledger Storage Cache", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Total SQLite Log Records:", fontSize = 13.sp)
+                    Text("${allTasks.size} entries", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                val memoCount = allTasks.filter { it.audioPath != null }.size
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Local Sound Files Cached:", fontSize = 13.sp)
+                    Text("$memoCount audio memos", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                val kbSize = viewModel.totalCacheBytes / 1024f
+                val formattedSize = if (kbSize > 1024f) {
+                    String.format("%.2f MB", kbSize / 1024f)
+                } else {
+                    String.format("%.1f KB", kbSize)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Temporary Cached File Size:", fontSize = 13.sp)
+                    Text(formattedSize, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                OutlinedButton(
+                    onClick = {
+                        viewModel.clearAudioCache()
+                        Toast.makeText(context, "Voice recordings cached storage cleared completely!", Toast.LENGTH_LONG).show()
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Clear All Cached Memos Cache Storage")
+                }
+            }
+        }
+
+        // Section 5: MongoDB Credentials Custom Integration Settings
+        var editedUri by remember { mutableStateOf(viewModel.mongoUri) }
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Language, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Atlas Sync Database Schema", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                OutlinedTextField(
+                    value = editedUri,
+                    onValueChange = { 
+                        editedUri = it
+                        viewModel.mongoUri = it
+                    },
+                    label = { Text("MongoDB Atlas Synchronizer URI Connection String") },
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Sync Mode:", fontSize = 12.sp)
+                    val statusText = viewModel.mongoConnectionStatus
+                    Text(
+                        text = statusText,
+                        fontWeight = FontWeight.Bold,
+                        color = if (viewModel.mongoActiveSync) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                        fontSize = 12.sp
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (viewModel.mongoActiveSync) {
+                        Button(
+                            onClick = { 
+                                viewModel.stopMongoSync()
+                                Toast.makeText(context, "MongoDB connection suspended", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Disconnect", fontSize = 12.sp)
+                        }
+                    } else {
+                        Button(
+                            onClick = { 
+                                viewModel.startMongoSyncTest()
+                                Toast.makeText(context, "Verifying cluster credentials...", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Authenticate Sync", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Footer: About
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "VoisTask Enterprise Ledger V1.1.2\nDesigned with SQLite database & secure encrypted channels.\nCreated beautifully using Kotlin Composed M3 widgets.",
+            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(12.dp))
     }
 }

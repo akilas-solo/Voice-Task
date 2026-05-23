@@ -38,6 +38,79 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     var themeOption by mutableStateOf("System") // "System", "Light", "Dark"
         private set
 
+    // App Recording & Audio Engine Settings
+    var audioQuality by mutableStateOf("High") // "High", "Standard", "Saver"
+        private set
+    var enableVibration by mutableStateOf(true)
+        private set
+    var autoPlayAfterRecording by mutableStateOf(false)
+        private set
+        
+    fun changeAudioQuality(quality: String) {
+        audioQuality = quality
+    }
+    
+    fun toggleVibration() {
+        enableVibration = !enableVibration
+    }
+    
+    fun toggleAutoPlay() {
+        autoPlayAfterRecording = !autoPlayAfterRecording
+    }
+
+    // Dynamic storage size indicators
+    var totalCacheBytes by mutableStateOf(0L)
+        private set
+        
+    fun refreshCacheStats() {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val audioDir = File(context.cacheDir, "recordings")
+                if (audioDir.exists() && audioDir.isDirectory) {
+                    var totalSize = 0L
+                    audioDir.listFiles()?.forEach { file ->
+                        if (file.isFile) {
+                            totalSize += file.length()
+                        }
+                    }
+                    totalCacheBytes = totalSize
+                } else {
+                    totalCacheBytes = 0L
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun clearAudioCache() {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val audioDir = File(context.cacheDir, "recordings")
+                if (audioDir.exists() && audioDir.isDirectory) {
+                    audioDir.listFiles()?.forEach { file ->
+                        if (file.isFile) file.delete()
+                    }
+                }
+                
+                // Set task audioPaths to null to safecheck missing cache records
+                val tasks = allTasks.value.toList()
+                for (task in tasks) {
+                    if (task.audioPath != null) {
+                        repository.updateTask(task.copy(audioPath = null))
+                    }
+                }
+                
+                refreshCacheStats()
+                addMongoLog("Audio cache cleared and local storage records synchronized.")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     // MongoDB Atlas Connection parameters
     var mongoUri by mutableStateOf("mongodb+srv://htest1951_db_user:emuye24@cluster0.8hjihrv.mongodb.net/lottery?appName=Cluster0")
     var mongoActiveSync by mutableStateOf(false)
@@ -85,6 +158,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         val voiceTaskDao = AppDatabase.getDatabase(application).voiceTaskDao()
         repository = VoiceTaskRepository(voiceTaskDao)
+        refreshCacheStats()
     }
 
     // Screens or pages
@@ -94,7 +168,8 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         COLLABORATION,
         BACKUP_RESTORE,
         USER_GUIDE,
-        FEEDBACK
+        FEEDBACK,
+        SETTINGS
     }
 
     private val _currentScreen = MutableStateFlow(Screen.MEMOS)
@@ -167,7 +242,8 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         try {
             val context = getApplication<Application>()
             val audioDir = File(context.cacheDir, "recordings").apply { mkdirs() }
-            val file = File(audioDir, "vois_${System.currentTimeMillis()}.3gp")
+            val formatExtension = if (audioQuality == "Saver") "3gp" else "mp4"
+            val file = File(audioDir, "vois_${System.currentTimeMillis()}.$formatExtension")
             activeRecordFile = file
 
             @Suppress("DEPRECATION")
@@ -177,8 +253,20 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                 MediaRecorder()
             }.apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
+                if (audioQuality == "Saver") {
+                    setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
+                } else {
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    if (audioQuality == "High") {
+                        setAudioSamplingRate(44100)
+                        setAudioEncodingBitRate(96000)
+                    } else { // Standard
+                        setAudioSamplingRate(16000)
+                        setAudioEncodingBitRate(24000)
+                    }
+                }
                 setOutputFile(file.absolutePath)
                 prepare()
                 start()
@@ -262,6 +350,14 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                     iconName = iconName
                 )
                 repository.insertTask(task)
+                refreshCacheStats()
+                if (autoPlayAfterRecording) {
+                    delay(300)
+                    val recentTask = allTasks.value.lastOrNull { it.audioPath == finalFile.absolutePath }
+                    if (recentTask != null) {
+                        playVoiceMemo(recentTask)
+                    }
+                }
             }
         } else {
             // Cleanup on empty/short file
