@@ -15,10 +15,16 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                val dbName = try {
-                    com.example.BuildConfig.DATABASE_NAME
+                var dbName = try {
+                    val name = com.example.BuildConfig.DATABASE_NAME
+                    if (name.isNullOrBlank()) "voistask_database" else name
                 } catch (e: Exception) {
                     "voistask_database"
+                }
+                // Sanitize: replace spaces with underscores, and strip out non-alphanumeric chars (keep underscores, periods)
+                dbName = dbName.replace(" ", "_").filter { it.isLetterOrDigit() || it == '_' || it == '.' }
+                if (dbName.isBlank()) {
+                    dbName = "voistask_database"
                 }
                 val instance = Room.databaseBuilder(
                     context.applicationContext,

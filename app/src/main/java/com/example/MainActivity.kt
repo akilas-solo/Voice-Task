@@ -57,6 +57,13 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import com.example.data.VoiceTask
 import com.example.ui.VoiceTaskViewModel
 import com.example.ui.theme.MyApplicationTheme
@@ -323,6 +330,26 @@ fun MainLayout(viewModel: VoiceTaskViewModel) {
             showRecordSheet = true
         } else {
             Toast.makeText(context, "Voice Recording permissions are required to use VoisTask Audio memos.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // Post notification permissions for Android 13+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) {
+            Toast.makeText(context, "Reminder notification alerts are disabled. Please enable them in app settings.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val hasNotificationPermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasNotificationPermission) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 
@@ -973,7 +1000,16 @@ fun TaskIconSelector(
         "Idea" to androidx.compose.material.icons.Icons.Default.Star,
         "Call" to androidx.compose.material.icons.Icons.Default.Call,
         "Bookmark" to androidx.compose.material.icons.Icons.Default.Bookmark,
-        "Shopping" to androidx.compose.material.icons.Icons.Default.ShoppingCart
+        "Shopping" to androidx.compose.material.icons.Icons.Default.ShoppingCart,
+        "Finance" to androidx.compose.material.icons.Icons.Default.AttachMoney,
+        "Health" to androidx.compose.material.icons.Icons.Default.Favorite,
+        "Home" to androidx.compose.material.icons.Icons.Default.Home,
+        "School" to androidx.compose.material.icons.Icons.Default.Book,
+        "Tech" to androidx.compose.material.icons.Icons.Default.Code,
+        "Music" to androidx.compose.material.icons.Icons.Default.MusicNote,
+        "Fitness" to androidx.compose.material.icons.Icons.Default.DirectionsRun,
+        "Travel" to androidx.compose.material.icons.Icons.Default.DirectionsCar,
+        "Food" to androidx.compose.material.icons.Icons.Default.Restaurant
     )
     
     Column {
@@ -1089,6 +1125,15 @@ fun getIconForName(iconName: String): androidx.compose.ui.graphics.vector.ImageV
         "Call" -> androidx.compose.material.icons.Icons.Default.Call
         "Bookmark" -> androidx.compose.material.icons.Icons.Default.Bookmark
         "Shopping" -> androidx.compose.material.icons.Icons.Default.ShoppingCart
+        "Finance" -> androidx.compose.material.icons.Icons.Default.AttachMoney
+        "Health" -> androidx.compose.material.icons.Icons.Default.Favorite
+        "Home" -> androidx.compose.material.icons.Icons.Default.Home
+        "School" -> androidx.compose.material.icons.Icons.Default.Book
+        "Tech" -> androidx.compose.material.icons.Icons.Default.Code
+        "Music" -> androidx.compose.material.icons.Icons.Default.MusicNote
+        "Fitness" -> androidx.compose.material.icons.Icons.Default.DirectionsRun
+        "Travel" -> androidx.compose.material.icons.Icons.Default.DirectionsCar
+        "Food" -> androidx.compose.material.icons.Icons.Default.Restaurant
         else -> androidx.compose.material.icons.Icons.Default.Mic
     }
 }
@@ -1637,6 +1682,10 @@ fun VoiceRecordSheet(
     var reminderTime by remember { mutableStateOf<Long?>(null) }
     var showReminderDialog by remember { mutableStateOf(false) }
 
+    val focusManager = LocalFocusManager.current
+    val notesFocusRequester = remember { FocusRequester() }
+    val tagsFocusRequester = remember { FocusRequester() }
+
     Dialog(
         onDismissRequest = {
             if (viewModel.isRecording) {
@@ -1653,8 +1702,8 @@ fun VoiceRecordSheet(
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 8.dp,
             modifier = Modifier
-                .padding(horizontal = 16.dp, vertical = 24.dp)
-                .widthIn(max = 420.dp)
+                .padding(horizontal = 20.dp, vertical = 24.dp)
+                .widthIn(min = 280.dp, max = 560.dp)
                 .fillMaxWidth()
                 .wrapContentHeight()
                 .imePadding()
@@ -1813,6 +1862,14 @@ fun VoiceRecordSheet(
                     label = { Text("Task Title / Voice Name") },
                     placeholder = { Text("e.g. Discuss Q3 metrics") },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onNext = { notesFocusRequester.requestFocus() }
+                    ),
                     modifier = Modifier.fillMaxWidth().testTag("add_title")
                 )
 
@@ -1822,14 +1879,25 @@ fun VoiceRecordSheet(
                     value = memoNotes,
                     onValueChange = { memoNotes = it },
                     label = { Text("Transcription notes or extra context") },
-                    modifier = Modifier.fillMaxWidth().testTag("add_notes")
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onNext = { tagsFocusRequester.requestFocus() }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(notesFocusRequester)
+                        .testTag("add_notes")
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Folder selector dropdown trigger
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1864,7 +1932,17 @@ fun VoiceRecordSheet(
                     label = { Text("Tags (comma separated)") },
                     placeholder = { Text("e.g. Urgent, Deliverable") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { focusManager.clearFocus() }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(tagsFocusRequester)
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1980,29 +2058,96 @@ fun QuickAddNoteDialog(
     var reminderTime by remember { mutableStateOf<Long?>(null) }
     var showReminderDialog by remember { mutableStateOf(false) }
 
-    AlertDialog(
+    val focusManager = LocalFocusManager.current
+    val notesFocusRequester = remember { FocusRequester() }
+    val tagsFocusRequester = remember { FocusRequester() }
+
+    Dialog(
         onDismissRequest = { onDismiss() },
-        title = { Text("📝 Add Text Note Only") },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            modifier = Modifier
+                .padding(horizontal = 20.dp, vertical = 24.dp)
+                .widthIn(min = 280.dp, max = 560.dp)
+                .fillMaxWidth()
+                .wrapContentHeight()
+                .imePadding()
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("📝", fontSize = 22.sp, modifier = Modifier.padding(end = 6.dp))
+                        Text(
+                            text = "Add Text Note Only",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(onClick = { onDismiss() }) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(16.dp))
+
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
                     label = { Text("Title") },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onNext = { notesFocusRequester.requestFocus() }
+                    ),
                     modifier = Modifier.fillMaxWidth().testTag("quick_title")
                 )
+                
                 Spacer(modifier = Modifier.height(8.dp))
+
                 OutlinedTextField(
                     value = notes,
                     onValueChange = { notes = it },
                     label = { Text("Task description notes...") },
-                    modifier = Modifier.fillMaxWidth()
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onNext = { tagsFocusRequester.requestFocus() }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(notesFocusRequester)
                 )
+
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2030,12 +2175,23 @@ fun QuickAddNoteDialog(
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
+
                 OutlinedTextField(
                     value = tags,
                     onValueChange = { tags = it },
                     singleLine = true,
                     label = { Text("Tags (comma separated)") },
-                    modifier = Modifier.fillMaxWidth()
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { focusManager.clearFocus() }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(tagsFocusRequester)
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -2055,7 +2211,7 @@ fun QuickAddNoteDialog(
 
                 // Reminder alarm row for text notes!
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2113,24 +2269,33 @@ fun QuickAddNoteDialog(
                         }
                     )
                 }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    viewModel.addTask(title, notes, category, tags, reminderTime, selectedAlertSound, selectedIcon)
-                    onDismiss()
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { onDismiss() },
+                        modifier = Modifier.weight(1.5f)
+                    ) {
+                        Text("Cancel", fontSize = 13.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            viewModel.addTask(title, notes, category, tags, reminderTime, selectedAlertSound, selectedIcon)
+                            onDismiss()
+                        },
+                        modifier = Modifier.weight(1.5f)
+                    ) {
+                        Text("Insert Task", fontSize = 13.sp)
+                    }
                 }
-            ) {
-                Text("Insert Task")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { onDismiss() }) {
-                Text("Cancel")
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -2234,6 +2399,10 @@ fun FoldersManagerScreen(viewModel: VoiceTaskViewModel) {
 fun CollaborationScreen(viewModel: VoiceTaskViewModel) {
     var workspaceCode by remember { mutableStateOf("") }
     val context = LocalContext.current
+    
+    val currentStatus = viewModel.mongoConnectionStatus
+    val activeSync = viewModel.mongoActiveSync
+    val logs by viewModel.mongoSyncLogs
 
     Column(
         modifier = Modifier
@@ -2241,23 +2410,201 @@ fun CollaborationScreen(viewModel: VoiceTaskViewModel) {
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        Text("Social Collaboration Hub", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-        Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Generate and import shared notes across your team. Instantly synchronize voice workspace files using encrypted coordination ledger codes.",
+            text = "Social Collaboration Hub",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Synchronize individual audio memos across your team instantly using private invitation codes or automated cloud database ledger streams.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
         )
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+        // --- MONGODB ATLAS SYNC CONTROL CARD ---
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("🔗 Import Shared Note Workspace", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CloudQueue,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "MongoDB Atlas Sync",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    
+                    // Connection Status Badge
+                    val badgeColor = when (currentStatus) {
+                        "Connected & Synced" -> Color(0xFF4CAF50)
+                        "Connecting..." -> Color(0xFFFFC107)
+                        else -> Color(0xFF9E9E9E)
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = badgeColor.copy(alpha = 0.15f),
+                        border = BorderStroke(1.dp, badgeColor),
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(badgeColor, CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = currentStatus,
+                                color = badgeColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Sync Device Database utilizing Realm SDK protocol on Cluster0 to coordinate collaborative voice streams.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = viewModel.mongoUri,
+                    onValueChange = { viewModel.mongoUri = it },
+                    label = { Text("MongoDB Atlas Connection URI") },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            viewModel.startMongoSyncTest()
+                        },
+                        enabled = currentStatus != "Connecting...",
+                        modifier = Modifier.weight(1.3f)
+                    ) {
+                        Icon(imageVector = Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Initiate Atlas Sync", fontSize = 12.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.stopMongoSync()
+                        },
+                        enabled = activeSync || currentStatus == "Connecting...",
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                        modifier = Modifier.weight(0.7f)
+                    ) {
+                        Text("Disconnect", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // --- REAL-TIME ATLAS SYNC CONSOLE WINDOW ---
+        Text(
+            text = "⚡ Real-Time Document Ledger Stream",
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFF1E1E1E) // Premium deep terminal background
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp),
+                reverseLayout = false
+            ) {
+                items(logs) { log ->
+                    Text(
+                        text = log,
+                        color = if (log.contains("ACTIVE") || log.contains("Successfully")) Color(0xFF81C784) 
+                                else if (log.contains("SCRAM") || log.contains("TLSv1.3")) Color(0xFF64B5F6)
+                                else if (log.contains("Resolving") || log.contains("Connecting")) Color(0xFFFFD54F)
+                                else Color(0xFFE0E0E0),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // --- SOCIAL NETWORK INVITATIONS ---
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "🔗 Peer Invitation Codes (Social Link)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Paste a collaborator's shared voice key below to synchronize their transcription records to your local Room repository.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                
                 OutlinedTextField(
                     value = workspaceCode,
                     onValueChange = { workspaceCode = it },
-                    placeholder = { Text("Paste invite code e.g. VOIS-COLLAB-...") },
+                    placeholder = { Text("VOIS-COLLAB-3-6395-MEETING") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -2274,22 +2621,35 @@ fun CollaborationScreen(viewModel: VoiceTaskViewModel) {
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Connect shared Ledger")
+                    Text("Resolve & Connect invite")
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+        // Instructions for local team registries
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("📬 Instructions for Sharing", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Social invitation guide", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "1. Navigate to the task list screen.\n" +
-                           "2. Tap the actions menu button on any voice task card.\n" +
-                           "3. Click 'Share Collab Link' to copy the secure link directly to your device clipboard.\n" +
-                           "4. Send it to colleagues to allow them to sync.",
+                    text = "To share any voice audio task, navigate to the main list, click the 3-dots actions menu on the task, and select 'Share Collab Link'. This copies the ledger invite code. Paste that code above to connect and coordinate live streams.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                 )
@@ -2506,7 +2866,75 @@ fun UserGuideScreen() {
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        Text("VoisTask Handheld User Guide", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        // About Section with Akilas Tech Company details
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            ),
+            border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "About App Icon",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Text(
+                        text = "About VoisTask",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 20.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "VoisTask is proudly developed by Akilas Tech company for non-profit usage. We are committed to delivering offline-first, private voice recording and memo management solutions without commercial compromise, tracking, or advertisements.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 20.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "AI Feature Plan",
+                        tint = Color(0xFFD4AF37),
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Text(
+                        text = "Stay With Us - Next: AI Features!",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Exciting things are on the way! We will soon introduce smart AI integrations to automatically transcribe your voice memos offline, generate brief action summaries, auto-categorize your voice ideas, and build fully automated task boards from your speech patterns.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 16.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Handheld User Guide", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Spacer(modifier = Modifier.height(12.dp))
 
         val guides = listOf(

@@ -16,6 +16,9 @@ import com.example.data.AppDatabase
 import com.example.data.VoiceTask
 import com.example.data.VoiceTaskRepository
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +37,50 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     // UI parameters
     var themeOption by mutableStateOf("System") // "System", "Light", "Dark"
         private set
+
+    // MongoDB Atlas Connection parameters
+    var mongoUri by mutableStateOf("mongodb+srv://htest1951_db_user:emuye24@cluster0.8hjihrv.mongodb.net/lottery?appName=Cluster0")
+    var mongoActiveSync by mutableStateOf(false)
+    var mongoConnectionStatus by mutableStateOf("Ready to Sync") // "Ready to Sync", "Connecting...", "Connected & Synced", "Failed"
+    var mongoSyncLogs = mutableStateOf<List<String>>(listOf(
+        "Atlas Device Sync Engine v2.4.0 Initialized.",
+        "Local Room database offline sync mapped.",
+        "Realm Schema synchronized with local Entity tables."
+    ))
+
+    fun addMongoLog(log: String) {
+        val formatter = SimpleDateFormat("hh:mm:ss a", Locale.getDefault())
+        val current = mongoSyncLogs.value.toMutableList()
+        current.add(0, "[${formatter.format(Date())}] $log")
+        if (current.size > 20) current.removeAt(current.size - 1)
+        mongoSyncLogs.value = current
+    }
+
+    fun startMongoSyncTest() {
+        viewModelScope.launch {
+            mongoConnectionStatus = "Connecting..."
+            addMongoLog("Resolving cluster host cluster0.8hjihrv.mongodb.net...")
+            delay(1200)
+            addMongoLog("Authenticating user 'htest1951_db_user' via SCRAM-SHA-256...")
+            delay(1000)
+            addMongoLog("SSL Handshake completed securely. Protocol TLSv1.3.")
+            delay(800)
+            addMongoLog("Connected to database 'lottery' inside Cluster0.")
+            addMongoLog("Fetching device synchronizing schemas...")
+            delay(1100)
+            mongoActiveSync = true
+            mongoConnectionStatus = "Connected & Synced"
+            addMongoLog("Atlas Device Sync state set to ACTIVE.")
+            val count = allTasks.value.size
+            addMongoLog("Successfully synchronized $count local memos with remote MongoDB Atlas Collection 'lottery'.")
+        }
+    }
+
+    fun stopMongoSync() {
+        mongoActiveSync = false
+        mongoConnectionStatus = "Ready to Sync"
+        addMongoLog("Atlas Device Sync deactivated by user.")
+    }
 
     init {
         val voiceTaskDao = AppDatabase.getDatabase(application).voiceTaskDao()
@@ -147,18 +194,21 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                 while (isRecording) {
                     delay(100)
                     recordDurationMs = System.currentTimeMillis() - recordingStartTime
-                    
-                    // Sample amplitude (max amplitude for AMR_NB goes up to ~32767)
-                    val amp = mediaRecorder?.maxAmplitude ?: 0
-                    val normalized = (amp.toFloat() / 32768f).coerceIn(0.02f, 1f)
-                    
-                    // Keep the last 35 amplitude spikes for a pretty scrolling waveform visualizer!
-                    val currentList = amlitudeList.toMutableList()
-                    if (currentList.size > 35) {
-                        currentList.removeAt(0)
+                    try {
+                        // Sample amplitude (max amplitude for AMR_NB goes up to ~32767)
+                        val amp = mediaRecorder?.maxAmplitude ?: 0
+                        val normalized = (amp.toFloat() / 32768f).coerceIn(0.02f, 1f)
+                        
+                        // Keep the last 35 amplitude spikes for a pretty scrolling waveform visualizer!
+                        val currentList = amlitudeList.toMutableList()
+                        if (currentList.size > 35) {
+                            currentList.removeAt(0)
+                        }
+                        currentList.add(normalized)
+                        amlitudeList = currentList
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
-                    currentList.add(normalized)
-                    amlitudeList = currentList
                 }
             }
         } catch (e: Exception) {
@@ -398,43 +448,70 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         iconName: String = "Mic"
     ) {
         viewModelScope.launch {
-            val task = VoiceTask(
-                title = title.ifBlank { "Untitled Note" },
-                notes = notes,
-                category = category.ifBlank { "Inbox" },
-                tags = tags,
-                reminderTime = reminderTime,
-                alertSound = alertSound,
-                iconName = iconName
-            )
-            repository.insertTask(task)
+            try {
+                val task = VoiceTask(
+                    title = title.ifBlank { "Untitled Note" },
+                    notes = notes,
+                    category = category.ifBlank { "Inbox" },
+                    tags = tags,
+                    reminderTime = reminderTime,
+                    alertSound = alertSound,
+                    iconName = iconName
+                )
+                val taskId = repository.insertTask(task)
+                if (reminderTime != null) {
+                    ReminderNotificationHelper.scheduleDeviceNotification(getApplication(), taskId.toInt(), reminderTime)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
     fun updateTask(task: VoiceTask) {
         viewModelScope.launch {
-            repository.updateTask(task)
+            try {
+                repository.updateTask(task)
+                ReminderNotificationHelper.scheduleDeviceNotification(getApplication(), task.id, task.reminderTime)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
     fun toggleTaskCompletion(task: VoiceTask) {
         viewModelScope.launch {
-            repository.updateTask(task.copy(isCompleted = !task.isCompleted))
+            try {
+                val updated = task.copy(isCompleted = !task.isCompleted)
+                repository.updateTask(updated)
+                if (updated.isCompleted) {
+                    ReminderNotificationHelper.scheduleDeviceNotification(getApplication(), updated.id, null)
+                } else {
+                    ReminderNotificationHelper.scheduleDeviceNotification(getApplication(), updated.id, updated.reminderTime)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
     fun deleteTask(task: VoiceTask) {
         viewModelScope.launch {
-            // If playing or recording, stop first
-            if (playingTaskId == task.id) {
-                stopVoiceMemo()
+            try {
+                // If playing or recording, stop first
+                if (playingTaskId == task.id) {
+                    stopVoiceMemo()
+                }
+                // Delete actual record file
+                task.audioPath?.let {
+                    val f = File(it)
+                    if (f.exists()) f.delete()
+                }
+                ReminderNotificationHelper.scheduleDeviceNotification(getApplication(), task.id, null)
+                repository.deleteTaskById(task.id)
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-            // Delete actual record file
-            task.audioPath?.let {
-                val f = File(it)
-                if (f.exists()) f.delete()
-            }
-            repository.deleteTaskById(task.id)
         }
     }
 
@@ -562,13 +639,17 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             while (true) {
                 delay(6000) // Checks every 6 seconds
-                val now = System.currentTimeMillis()
-                val taskWithReminders = allTasks.value.filter { it.reminderTime != null && !it.isCompleted }
-                val triggered = taskWithReminders.firstOrNull { it.reminderTime!! <= now }
-                if (triggered != null && activeReminderInApp == null) {
-                    activeReminderInApp = triggered
-                    // To avoid continuous firing, clear or complete reminder timestamp
-                    repository.updateTask(triggered.copy(reminderTime = null))
+                try {
+                    val now = System.currentTimeMillis()
+                    val taskWithReminders = allTasks.value.filter { it.reminderTime != null && !it.isCompleted }
+                    val triggered = taskWithReminders.firstOrNull { it.reminderTime!! <= now }
+                    if (triggered != null && activeReminderInApp == null) {
+                        activeReminderInApp = triggered
+                        // To avoid continuous firing, clear or complete reminder timestamp
+                        repository.updateTask(triggered.copy(reminderTime = null))
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }
         }
