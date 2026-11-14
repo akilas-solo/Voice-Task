@@ -1,56 +1,109 @@
 package com.example.data
 
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
+import com.example.ui.AlarmSoundCatalog
+import com.example.ui.ReminderNotificationHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class VoiceTaskAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val taskId = intent.getIntExtra("TASK_ID", -1)
-        if (taskId == -1) return
+        val pendingResult = goAsync()
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val db = AppDatabase.getDatabase(context)
+                    val tasks = db.voiceTaskDao().getAllTasks()
+                    ReminderNotificationHelper.rescheduleAllPendingReminders(context, tasks)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    pendingResult.finish()
+                }
+            }
+            return
+        }
 
-        val coroutineScope = CoroutineScope(Dispatchers.IO)
-        coroutineScope.launch {
+        val taskId = intent.getIntExtra("TASK_ID", -1)
+        if (taskId == -1) {
+            pendingResult.finish()
+            return
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = AppDatabase.getDatabase(context)
                 val task = db.voiceTaskDao().getTaskById(taskId)
                 if (task != null && !task.isCompleted) {
                     showRealDeviceNotification(context, task)
+
+                    val prefs = TelegramPrefs(context).getConfig()
+                    val recentlySent = task.lastTelegramSentAt != null &&
+                        (System.currentTimeMillis() - task.lastTelegramSentAt) < 25_000L
+                    if (task.notifyTelegram && prefs.isVerified && prefs.autoSendReminders && !recentlySent) {
+                        TelegramSyncManager.sendTaskAlert(
+                            context = context.applicationContext,
+                            task = task,
+                            isReminder = true
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+            } finally {
+                pendingResult.finish()
             }
         }
     }
 
     private fun showRealDeviceNotification(context: Context, task: VoiceTask) {
-        val channelId = "voistask_reminders_channel"
+        val channelId = "voistask_alarm_channel_v2"
         val notificationId = task.id
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+        val customRingtoneUri = AlarmSoundCatalog.extractRingtoneUri(task.alertSound)
+            ?.let { runCatching { Uri.parse(it) }.getOrNull() }
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "VoisTask Reminders",
+                "Voice Task Alarms",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Notification channel for scheduled audio memo reminder alarms"
+                description = "Scheduled alarm reminders and chime notifications"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0L, 280L, 220L, 280L, 600L)
+                if (customRingtoneUri != null) {
+                    setSound(
+                        customRingtoneUri,
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                }
             }
             notificationManager.createNotificationChannel(channel)
         }
 
         val openIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("TRIGGERED_TASK_ID", task.id)
         }
         val pendingIntent = PendingIntent.getActivity(
             context,
@@ -59,16 +112,28 @@ class VoiceTaskAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val soundTitle = AlarmSoundCatalog.displayName(task.alertSound)
+        val priorityLabel = TaskPriority.fromLevel(task.priority).label
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm) // System standard alarm icon
-            .setContentTitle("⏰ VoisTask Reminder")
-            .setContentText(task.title)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(
-                if (task.notes.isBlank()) "Task: ${task.title}\nFolder: ${task.category}" 
-                else "${task.title}\nNotes: ${task.notes}\nFolder: ${task.category}"
-            ))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentTitle("Reminder: ${task.title}")
+            .setContentText("$priorityLabel · ${task.category} · $soundTitle")
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    buildString {
+                        append(task.title)
+                        if (task.notes.isNotBlank()) {
+                            append("\n").append(task.notes)
+                        }
+                        append("\nFolder: ").append(task.category)
+                        append(" • Priority: ").append(priorityLabel)
+                        append(" • Sound: ").append(soundTitle)
+                    }
+                )
+            )
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setDefaults(NotificationCompat.DEFAULT_VIBRATE)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
 
