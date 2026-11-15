@@ -1,8 +1,10 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -20,6 +22,7 @@ import com.example.data.AiResult
 import com.example.data.AiStudioConfig
 import com.example.data.AiSuggestedAction
 import com.example.data.AppDatabase
+import com.example.data.BankSmsFileParser
 import com.example.data.BankSmsParser
 import com.example.data.ConnectorDispatchLog
 import com.example.data.ConnectorResult
@@ -331,9 +334,132 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     var financeChatMessages by mutableStateOf<List<FinanceChatMessage>>(emptyList())
         private set
 
+    var clipboardBankPromptText by mutableStateOf<String?>(null)
+        private set
+
+    var clipboardDetectedSummary by mutableStateOf<String?>(null)
+        private set
+
+    private val dismissedClipboardHashes = mutableSetOf<String>()
+
     fun clearFinanceStatusBanner() {
         financeStatusMessage = null
         financeStatusIsError = false
+    }
+
+    fun inspectClipboardForBankSms(rawClipboardText: String?) {
+        val text = rawClipboardText?.trim().orEmpty()
+        if (text.length < 12) {
+            clipboardBankPromptText = null
+            clipboardDetectedSummary = null
+            return
+        }
+        val hash = BankSmsParser.computeFingerprint("clipboard", text, 0L)
+        if (hash in dismissedClipboardHashes) {
+            clipboardBankPromptText = null
+            clipboardDetectedSummary = null
+            return
+        }
+        val parsed = BankSmsParser.parseBatchRawText(text, defaultSender = "Clipboard SMS")
+        if (parsed.isEmpty()) {
+            clipboardBankPromptText = null
+            clipboardDetectedSummary = null
+            return
+        }
+        val existingFingerprints = allFinanceTransactions.value.mapTo(mutableSetOf()) { it.smsFingerprint }
+        val newMatches = parsed.filter { it.smsFingerprint !in existingFingerprints }
+        if (newMatches.isEmpty()) {
+            clipboardBankPromptText = null
+            clipboardDetectedSummary = null
+            return
+        }
+        val first = newMatches.first()
+        clipboardBankPromptText = text
+        clipboardDetectedSummary = if (newMatches.size == 1) {
+            "${first.bankName} · ${FinanceAnalyticsEngine.formatSignedMoney(first)}"
+        } else {
+            "${newMatches.size} bank alerts detected (${first.bankName} & more)"
+        }
+    }
+
+    fun importClipboardBankSms() {
+        val raw = clipboardBankPromptText ?: return
+        dismissedClipboardHashes.add(BankSmsParser.computeFingerprint("clipboard", raw, 0L))
+        clipboardBankPromptText = null
+        clipboardDetectedSummary = null
+        importManualBankSms(rawText = raw, senderHint = "Clipboard SMS")
+    }
+
+    fun dismissClipboardBankSms() {
+        clipboardBankPromptText?.let { raw ->
+            dismissedClipboardHashes.add(BankSmsParser.computeFingerprint("clipboard", raw, 0L))
+        }
+        clipboardBankPromptText = null
+        clipboardDetectedSummary = null
+    }
+
+    fun importSharedTextFromIntent(sharedText: String) {
+        navigateTo(Screen.FINANCE)
+        viewModelScope.launch {
+            val parsed = BankSmsParser.parseBatchRawText(sharedText, defaultSender = "Shared SMS")
+                .map { it.copy(source = "SHARE_INTENT") }
+            if (parsed.isEmpty()) {
+                financeStatusMessage = "Shared text did not contain a recognized Telebirr, CBE, or bank SMS alert."
+                financeStatusIsError = true
+                return@launch
+            }
+            val inserted = repository.insertFinanceTransactionsDedup(parsed)
+            val banksList = parsed.map { it.bankName }.distinct().take(4).joinToString(", ")
+            financeStatusMessage = if (inserted > 0) {
+                "Imported $inserted shared bank alert(s) ($banksList)."
+            } else {
+                "Shared bank alert (${parsed.first().bankName}) is already in your Finance ledger."
+            }
+            financeStatusIsError = false
+        }
+    }
+
+    fun importSmsBackupUris(
+        context: Context,
+        uris: List<Uri>,
+        switchToFinance: Boolean = false
+    ) {
+        if (uris.isEmpty() || isFinanceScanning) return
+        if (switchToFinance) navigateTo(Screen.FINANCE)
+        viewModelScope.launch {
+            isFinanceScanning = true
+            financeStatusMessage = "Importing SMS backup file(s)..."
+            financeStatusIsError = false
+            val appCtx = context.applicationContext
+            var totalInspected = 0
+            val allParsed = mutableListOf<FinanceTransaction>()
+            var lastError: String? = null
+            val formats = mutableSetOf<String>()
+
+            uris.forEach { uri ->
+                val res = BankSmsFileParser.parseUri(appCtx, uri)
+                totalInspected += res.totalRecordsInspected
+                if (res.formatLabel.isNotBlank()) formats.add(res.formatLabel)
+                allParsed.addAll(res.parsedTransactions)
+                if (res.errorMessage != null) lastError = res.errorMessage
+            }
+
+            if (allParsed.isEmpty()) {
+                financeStatusMessage = lastError
+                    ?: "Inspected $totalInspected record(s) (${formats.joinToString(", ")}) — no supported bank SMS alerts found."
+                financeStatusIsError = true
+            } else {
+                val inserted = repository.insertFinanceTransactionsDedup(allParsed)
+                val banksList = allParsed.map { it.bankName }.distinct().take(4).joinToString(", ")
+                financeStatusMessage = if (inserted > 0) {
+                    "Imported $inserted new transaction(s) from ${formats.joinToString("/")} ($banksList)."
+                } else {
+                    "Verified ${allParsed.size} alert(s) in backup file — all already in your Finance ledger."
+                }
+                financeStatusIsError = false
+            }
+            isFinanceScanning = false
+        }
     }
 
     fun setFinancePeriodMode(mode: FinancePeriodMode) {

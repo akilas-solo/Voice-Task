@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
@@ -76,7 +77,7 @@ class MainActivity : ComponentActivity() {
             ViewModelProvider.AndroidViewModelFactory.getInstance(application)
         )[VoiceTaskViewModel::class.java]
         viewModelRef = viewModel
-        handleTriggeredReminderIntent(intent, viewModel)
+        handleIncomingIntent(intent, viewModel)
 
         setContent {
             val isDark = when (viewModel.themeOption) {
@@ -113,14 +114,38 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        viewModelRef?.let { handleTriggeredReminderIntent(intent, it) }
+        viewModelRef?.let { handleIncomingIntent(intent, it) }
     }
 
-    private fun handleTriggeredReminderIntent(intent: Intent?, viewModel: VoiceTaskViewModel) {
-        val triggeredTaskId = intent?.getIntExtra("TRIGGERED_TASK_ID", -1) ?: -1
+    private fun handleIncomingIntent(intent: Intent?, viewModel: VoiceTaskViewModel) {
+        if (intent == null) return
+        val triggeredTaskId = intent.getIntExtra("TRIGGERED_TASK_ID", -1)
         if (triggeredTaskId > 0) {
-            intent?.removeExtra("TRIGGERED_TASK_ID")
+            intent.removeExtra("TRIGGERED_TASK_ID")
             viewModel.openReminderById(triggeredTaskId)
+        }
+
+        when (intent.action) {
+            Intent.ACTION_SEND -> {
+                val sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+                val sharedUri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                intent.action = null
+                when {
+                    !sharedText.isNullOrBlank() -> viewModel.importSharedTextFromIntent(sharedText)
+                    sharedUri != null -> viewModel.importSmsBackupUris(this, listOf(sharedUri), switchToFinance = true)
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                val sharedTexts = intent.getCharSequenceArrayListExtra(Intent.EXTRA_TEXT)
+                    ?.mapNotNull { it?.toString()?.takeIf(String::isNotBlank) }
+                    ?.joinToString("\n\n")
+                val sharedUris = IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                intent.action = null
+                when {
+                    !sharedTexts.isNullOrBlank() -> viewModel.importSharedTextFromIntent(sharedTexts)
+                    !sharedUris.isNullOrEmpty() -> viewModel.importSmsBackupUris(this, sharedUris, switchToFinance = true)
+                }
+            }
         }
     }
 

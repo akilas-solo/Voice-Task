@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AppDatabase
 import com.example.data.BankInstitution
+import com.example.data.BankSmsFileParser
 import com.example.data.BankSmsParser
 import com.example.data.FinanceAnalyticsEngine
 import com.example.data.FinanceFilterState
@@ -356,5 +357,48 @@ class FinanceModuleTest {
         assertEquals("Transfers", catPie[0].label)
         assertEquals("Shopping", catPie[1].label)
         assertEquals("Dining & Food", catPie[2].label)
+    }
+
+    @Test
+    fun `parses XML CSV and TXT SMS backup files cleanly while ignoring OTPs`() {
+        val xmlBackup = """
+            <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+            <smses count="3">
+              <sms address="127" date="1763020800000" body="You have transferred ETB 850.00 to Sara &amp; Co on 13/11/2026 10:00:00. Your transaction number is TX9011. Your current balance is ETB 4,150.00." />
+              <sms address="CBE" date="1763024400000" body="Your verification code is 123456. Do not share this code." />
+              <sms address="Abyssinia" date="1763028000000" body="Dear Customer, Your account ***9911 has been credited with ETB 5,000.00 from Client A on 13/11/2026 12:00:00. Available Balance: ETB 19,000.00." />
+            </smses>
+        """.trimIndent()
+
+        val xmlRes = BankSmsFileParser.parseContent(xmlBackup, "sms-backup.xml")
+        assertEquals("XML Backup", xmlRes.formatLabel)
+        assertEquals(3, xmlRes.totalRecordsInspected)
+        assertEquals(2, xmlRes.parsedTransactions.size)
+        assertEquals("Sara & Co", xmlRes.parsedTransactions[0].counterparty)
+        assertEquals(BankInstitution.BOA.code, xmlRes.parsedTransactions[1].bankCode)
+
+        val csvBackup = """
+            address,date,body
+            "CBE","2026-11-13 14:00:00","Dear Customer, your Account 1000***12 has been debited with ETB 1,200.00 on 13/11/2026 14:00:00. Current Balance is ETB 10,000.00."
+            "127","2026-11-13 15:00:00","Dear Customer, You have received ETB 600.00 from Dawit on 13/11/2026 15:00:00. Current balance is ETB 6,600.00."
+        """.trimIndent()
+
+        val csvRes = BankSmsFileParser.parseContent(csvBackup, "export.csv")
+        assertEquals("CSV", csvRes.formatLabel)
+        assertEquals(2, csvRes.parsedTransactions.size)
+        assertEquals(1200.0, csvRes.parsedTransactions[0].amount, 0.01)
+        assertEquals(600.0, csvRes.parsedTransactions[1].amount, 0.01)
+
+        val txtBackup = """
+            Awash Bank: You paid ETB 350.00 to Bakery on 13/11/2026 08:30:00. Current Balance: ETB 2,500.00.
+
+            Dashen Bank: Your account is credited with ETB 2,000.00 from Freelance on 13/11/2026 11:15:00. Balance ETB 7,000.00.
+        """.trimIndent()
+
+        val txtRes = BankSmsFileParser.parseContent(txtBackup, "alerts.txt")
+        assertEquals("Text", txtRes.formatLabel)
+        assertEquals(2, txtRes.parsedTransactions.size)
+        assertEquals(BankInstitution.AWASH.code, txtRes.parsedTransactions[0].bankCode)
+        assertEquals(BankInstitution.DASHEN.code, txtRes.parsedTransactions[1].bankCode)
     }
 }

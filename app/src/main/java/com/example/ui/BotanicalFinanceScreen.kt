@@ -1,6 +1,10 @@
 package com.example.ui
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -41,6 +45,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.BankBreakdownStat
 import com.example.data.BankInstitution
@@ -112,6 +119,36 @@ fun FinanceScreen(
         } else {
             onRequestSmsPermission()
         }
+    }
+
+    val backupFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importSmsBackupUris(context, listOf(uri))
+        }
+    }
+
+    val readClipboardForBankSms = {
+        val clipText = runCatching {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+        }.getOrNull()
+        viewModel.inspectClipboardForBankSms(clipText)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(allTransactions.size) {
+        readClipboardForBankSms()
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                readClipboardForBankSms()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     if (showDayPicker) {
@@ -269,6 +306,70 @@ fun FinanceScreen(
             }
         }
 
+        // 1b. One-Tap Clipboard Bank SMS Detector Prompt
+        if (!viewModel.clipboardBankPromptText.isNullOrBlank()) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = BotanicalAmber.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, BotanicalAmber.copy(alpha = 0.45f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("finance_clipboard_prompt_card")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentPasteGo,
+                            contentDescription = "Clipboard Bank SMS",
+                            tint = BotanicalAmber,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Bank SMS detected in clipboard",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = viewModel.clipboardDetectedSummary ?: "Tap Import to add to ledger",
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = { viewModel.importClipboardBankSms() },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("finance_clipboard_import_btn")
+                        ) {
+                            Text("Import", fontSize = 12.sp)
+                        }
+                        IconButton(
+                            onClick = { viewModel.dismissClipboardBankSms() },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("finance_clipboard_dismiss_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss clipboard SMS prompt",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // 2. Hero Cashflow & Latest Bank Balances Card
         item {
             FinanceHeroSummaryCard(
@@ -278,6 +379,18 @@ fun FinanceScreen(
                 hasAnyData = allTransactions.isNotEmpty(),
                 onScanSmsClick = triggerSmsScan,
                 onPasteSmsClick = { showPasteSmsDialog = true },
+                onImportFileClick = {
+                    backupFileLauncher.launch(
+                        arrayOf(
+                            "text/plain",
+                            "text/csv",
+                            "text/comma-separated-values",
+                            "text/xml",
+                            "application/xml",
+                            "*/*"
+                        )
+                    )
+                },
                 onManualAddClick = { showManualTxDialog = true },
                 onResetFilters = { viewModel.resetFinanceFilters() },
                 onClearAllClick = { showClearConfirm = true }
@@ -1206,6 +1319,7 @@ private fun FinanceHeroSummaryCard(
     hasAnyData: Boolean,
     onScanSmsClick: () -> Unit,
     onPasteSmsClick: () -> Unit,
+    onImportFileClick: () -> Unit,
     onManualAddClick: () -> Unit,
     onResetFilters: () -> Unit,
     onClearAllClick: () -> Unit
@@ -1388,55 +1502,82 @@ private fun FinanceHeroSummaryCard(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = onScanSmsClick,
-                    enabled = !isScanning,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .weight(1.3f)
-                        .heightIn(min = 48.dp)
-                        .testTag("finance_scan_sms_btn")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (isScanning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Scanning...", fontSize = 13.sp)
-                    } else {
-                        Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Scan SMS Inbox", fontSize = 13.sp, maxLines = 1)
+                    Button(
+                        onClick = onScanSmsClick,
+                        enabled = !isScanning,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1.25f)
+                            .heightIn(min = 48.dp)
+                            .testTag("finance_scan_sms_btn")
+                    ) {
+                        if (isScanning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Scanning...", fontSize = 13.sp)
+                        } else {
+                            Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Scan SMS Inbox", fontSize = 13.sp, maxLines = 1)
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = onPasteSmsClick,
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier
+                            .weight(0.95f)
+                            .heightIn(min = 48.dp)
+                            .testTag("finance_paste_sms_btn")
+                    ) {
+                        Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Paste SMS", fontSize = 12.sp, maxLines = 1)
                     }
                 }
 
-                OutlinedButton(
-                    onClick = onPasteSmsClick,
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                    modifier = Modifier
-                        .weight(0.95f)
-                        .heightIn(min = 48.dp)
-                        .testTag("finance_paste_sms_btn")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Paste SMS", fontSize = 12.sp, maxLines = 1)
-                }
+                    OutlinedButton(
+                        onClick = onImportFileClick,
+                        enabled = !isScanning,
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier
+                            .weight(1.25f)
+                            .heightIn(min = 48.dp)
+                            .testTag("finance_import_file_btn")
+                    ) {
+                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Import CSV / XML / TXT", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
 
-                FilledTonalIconButton(
-                    onClick = onManualAddClick,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("finance_add_manual_btn")
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add manual transaction")
+                    OutlinedButton(
+                        onClick = onManualAddClick,
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier
+                            .weight(0.95f)
+                            .heightIn(min = 48.dp)
+                            .testTag("finance_add_manual_btn")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Entry", fontSize = 12.sp, maxLines = 1)
+                    }
                 }
             }
         }

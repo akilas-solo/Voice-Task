@@ -33,7 +33,19 @@ Because AI Studio's GitHub exporter skips updating binary APK files inside `.bui
 ## Latest Build Highlights (`v1.1` / `versionCode 2`)
 
 - **Finance Module & Bank SMS Parsing:** Reads Telebirr, CBE, Bank of Abyssinia, Awash, and other bank SMS alerts with runtime `READ_SMS` permission handling and Room deduplication.
+- **Zero-Permission SMS Import Alternatives:** Share alerts directly from Messages (`Share -> Voice Task`), tap the one-tap clipboard bank SMS banner, or import `.csv`, `.txt`, and Android SMS Backup `.xml` files without granting `READ_SMS`.
 - **Interactive Finance Charts:** Includes `LineChart` trend visualization and interactive `PieChart` breakdown in the Finance Overview screen categorized by **Bank** or **Spending Type**.
 - **AI Financial Q&A:** Answers questions filtered by specific time-of-day, day, or month.
 - **Task Sorting & Reminder Picker:** Chronological, priority, and alphabetical sorting plus calendar date/time presets and botanical alarm chimes.
+
+## Installing Sideloaded APKs (`Google Play Protect` Notice)
+
+Because this APK retains `READ_SMS` for automatic inbox scanning, Android's **Google Play Protect Enhanced Fraud Protection** blocks installing the APK directly from a phone's **Downloads** folder ("App blocked to protect your device"). To install it on a test device:
+
+- **Option 1 (Recommended — USB ADB):**
+  ```bash
+  adb install -r app-debug.apk
+  ```
+- **Option 2 (Device Sideload):** Temporarily open **Google Play Store -> Profile icon -> Play Protect -> Settings** and turn off **Scan apps with Play Protect** while installing `app-debug.apk`, then turn scanning back on immediately afterward.
+
 
