@@ -201,6 +201,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         refreshCacheStats()
+        upgradeStoredFinanceTransactionsIfNeeded()
     }
 
     // Screens or pages
@@ -662,6 +663,64 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     fun updateFinanceCategory(tx: FinanceTransaction, category: String) {
         viewModelScope.launch {
             repository.updateFinanceTransaction(tx.copy(category = category))
+        }
+    }
+
+    fun updateFinanceType(tx: FinanceTransaction, newType: TransactionType) {
+        viewModelScope.launch {
+            repository.updateFinanceTransaction(tx.copy(type = newType.name))
+        }
+    }
+
+    fun reparseSingleFinanceTransaction(
+        tx: FinanceTransaction,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        if (tx.rawSmsBody.isBlank()) {
+            onResult(false, "No raw SMS text stored for this entry.")
+            return
+        }
+        viewModelScope.launch {
+            val reparsed = withContext(Dispatchers.Default) {
+                BankSmsParser.parseSms(
+                    sender = tx.rawSender,
+                    body = tx.rawSmsBody,
+                    receivedTimestampMs = tx.timestamp,
+                    source = tx.source
+                )
+            }
+            if (reparsed == null) {
+                repository.deleteFinanceTransactionById(tx.id)
+                onResult(false, "Message flagged as non-transaction and removed.")
+            } else {
+                repository.updateFinanceTransaction(
+                    tx.copy(
+                        bankName = reparsed.bankName,
+                        bankCode = reparsed.bankCode,
+                        type = reparsed.type,
+                        amount = reparsed.amount,
+                        currency = reparsed.currency,
+                        balanceAfter = reparsed.balanceAfter,
+                        serviceCharge = reparsed.serviceCharge,
+                        counterparty = reparsed.counterparty,
+                        referenceId = reparsed.referenceId,
+                        category = reparsed.category
+                    )
+                )
+                onResult(true, "Re-parsed with updated bank rules.")
+            }
+        }
+    }
+
+    private fun upgradeStoredFinanceTransactionsIfNeeded() {
+        val prefs = getApplication<Application>().getSharedPreferences("finance_parser_prefs", Context.MODE_PRIVATE)
+        val currentVersion = 2
+        if (prefs.getInt("parser_version", 1) >= currentVersion) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                repository.reparseStoredSmsTransactions()
+                prefs.edit().putInt("parser_version", currentVersion).apply()
+            }
         }
     }
 

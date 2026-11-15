@@ -53,6 +53,7 @@ import com.example.ui.BotanicalEmptyMemosState
 import com.example.ui.BotanicalTabletRail
 import com.example.ui.BotanicalTopHeader
 import com.example.ui.FeedbackScreen
+import com.example.ui.FinanceAiModalSheet
 import com.example.ui.FinanceScreen
 import com.example.ui.FoldersManagerScreen
 import com.example.ui.InAppReminderDialog
@@ -186,6 +187,7 @@ fun MainLayout(
     var showRecordSheet by remember { mutableStateOf(false) }
     var showQuickAddDialog by remember { mutableStateOf(false) }
     var showAiStudioSheet by remember { mutableStateOf(false) }
+    var showFinanceAiSheet by remember { mutableStateOf(false) }
     var aiSheetInitialTab by remember { mutableIntStateOf(0) }
     var aiSheetTaskId by remember { mutableStateOf<Int?>(null) }
     var aiSheetNoteId by remember { mutableStateOf<Int?>(null) }
@@ -362,10 +364,14 @@ fun MainLayout(
                 onNavigate = { viewModel.navigateTo(it) },
                 onRecordClick = launchMainRecorder,
                 onOpenAiStudio = {
-                    aiSheetInitialTab = 0
-                    aiSheetTaskId = null
-                    aiSheetNoteId = null
-                    showAiStudioSheet = true
+                    if (currentScreen == VoiceTaskViewModel.Screen.FINANCE) {
+                        showFinanceAiSheet = true
+                    } else {
+                        aiSheetInitialTab = 0
+                        aiSheetTaskId = null
+                        aiSheetNoteId = null
+                        showAiStudioSheet = true
+                    }
                 },
                 onToggleTheme = toggleTheme
             )
@@ -384,10 +390,14 @@ fun MainLayout(
                     },
                     onQuickAddTextNote = { showQuickAddDialog = true },
                     onOpenAiStudio = {
-                        aiSheetInitialTab = 0
-                        aiSheetTaskId = null
-                        aiSheetNoteId = null
-                        showAiStudioSheet = true
+                        if (currentScreen == VoiceTaskViewModel.Screen.FINANCE) {
+                            showFinanceAiSheet = true
+                        } else {
+                            aiSheetInitialTab = 0
+                            aiSheetTaskId = null
+                            aiSheetNoteId = null
+                            showAiStudioSheet = true
+                        }
                     },
                     onToggleTheme = toggleTheme,
                     onNavigate = { viewModel.navigateTo(it) }
@@ -503,6 +513,13 @@ fun MainLayout(
                                 viewModel.navigateTo(VoiceTaskViewModel.Screen.SETTINGS)
                             },
                             onDismiss = { showAiStudioSheet = false }
+                        )
+                    }
+
+                    if (showFinanceAiSheet) {
+                        FinanceAiModalSheet(
+                            viewModel = viewModel,
+                            onDismiss = { showFinanceAiSheet = false }
                         )
                     }
                 }

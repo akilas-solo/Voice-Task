@@ -532,7 +532,86 @@ class FinanceModuleTest {
     }
 
     @Test
-    fun `finance hero 2x2 actions and collapsible filter panel toggle cleanly`() {
+    fun `telebirr footer does not pollute counterparty or category and non-transactions are rejected`() = runTest {
+        val telebirrTransfer = "Dear Zelalem, You have transferred ETB 40.00 to Belete Yisemaw (251911000000) on 14/11/2026 18:46:10. Your transaction number is DBK991122. The service fee is ETB 0.00 and VAT (15%) is ETB 0.00. Your current telebirr account balance is ETB 1,087.95. Thank you for using telebirr ethio telecom"
+        val parsedTransfer = BankSmsParser.parseSms("127", telebirrTransfer)
+        assertNotNull(parsedTransfer)
+        assertEquals("Belete Yisemaw", parsedTransfer!!.counterparty)
+        assertEquals("Transfers", parsedTransfer.category)
+        assertEquals(40.0, parsedTransfer.amount, 0.01)
+        assertEquals(1087.95, parsedTransfer.balanceAfter ?: 0.0, 0.01)
+
+        val telebirrBonus = "Dear Customer, You have received ETB 5.00 cashback reward on 12/11/2026 19:10:00. Your current telebirr account balance is ETB 1,092.95. Thank you for using telebirr ethio telecom"
+        val parsedBonus = BankSmsParser.parseSms("127", telebirrBonus)
+        assertNotNull(parsedBonus)
+        assertFalse(parsedBonus!!.counterparty.contains("using telebirr", ignoreCase = true))
+
+        val telebirrAirtime = "You have paid ETB 25.00 for airtime recharge on 14/11/2026 10:00:00. Your current balance is ETB 900.00. Thank you for using telebirr ethio telecom"
+        val parsedAirtime = BankSmsParser.parseSms("127", telebirrAirtime)
+        assertNotNull(parsedAirtime)
+        assertEquals("Airtime & Data", parsedAirtime!!.category)
+
+        // Strict rejections even when "balance" appears in the text
+        val failedTx = "Your Telebirr transfer of ETB 5,000.00 has failed due to insufficient balance. Current balance is ETB 200.00."
+        assertNull(BankSmsParser.parseSms("127", failedTx))
+
+        val otpWithBalanceWord = "Your CBE verification code is 448811 to check your balance. Do not share this code."
+        assertNull(BankSmsParser.parseSms("CBE", otpWithBalanceWord))
+
+        val telecomDataBalance = "Dear Customer, your remaining data package balance is 1024 MB and expires in 5 days."
+        assertNull(BankSmsParser.parseSms("ethiotel", telecomDataBalance))
+
+        val balanceInquiryOnly = "Dear Customer, your current account balance is ETB 12,450.00."
+        assertNull(BankSmsParser.parseSms("CBE", balanceInquiryOnly))
+
+        // Verify stored Room reparse repairs legacy misclassified rows and deletes false positives
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dao = AppDatabase.getDatabase(context).voiceTaskDao()
+        val repo = VoiceTaskRepository(dao)
+        repo.clearAllFinanceTransactions()
+
+        repo.insertFinanceTransaction(
+            FinanceTransaction(
+                smsFingerprint = "legacy_bad_1",
+                bankName = "Telebirr",
+                bankCode = BankInstitution.TELEBIRR.code,
+                type = TransactionType.TRANSFER.name,
+                amount = 40.0,
+                counterparty = "using telebirr ethio telecom",
+                category = "Airtime & Data",
+                rawSender = "127",
+                rawSmsBody = telebirrTransfer,
+                timestamp = parsedTransfer.timestamp,
+                source = "SMS_INBOX"
+            )
+        )
+        repo.insertFinanceTransaction(
+            FinanceTransaction(
+                smsFingerprint = "legacy_failed_2",
+                bankName = "Telebirr",
+                bankCode = BankInstitution.TELEBIRR.code,
+                type = TransactionType.EXPENSE.name,
+                amount = 5000.0,
+                counterparty = "Telebirr",
+                category = "Other",
+                rawSender = "127",
+                rawSmsBody = failedTx,
+                timestamp = 1763020800000L,
+                source = "SMS_INBOX"
+            )
+        )
+
+        val (updated, removed) = repo.reparseStoredSmsTransactions()
+        assertEquals(1, updated)
+        assertEquals(1, removed)
+        val cleaned = repo.getAllFinanceTransactions()
+        assertEquals(1, cleaned.size)
+        assertEquals("Belete Yisemaw", cleaned.first().counterparty)
+        assertEquals("Transfers", cleaned.first().category)
+    }
+
+    @Test
+    fun `streamlined finance hero uses single + menu and collapsible filter drawer`() {
         val filterState = FinanceFilterState()
         composeTestRule.setContent {
             MyApplicationTheme(darkTheme = false) {
@@ -546,9 +625,13 @@ class FinanceModuleTest {
                             totalOutflow = 1200.0,
                             netFlow = 3800.0
                         ),
+                        monthlySpendingTotal = 1200.0,
+                        monthlyIncomeTotal = 5000.0,
+                        monthlyLabel = "November 2026",
                         filterState = filterState,
                         isScanning = false,
                         hasAnyData = true,
+                        hasSmsPermission = true,
                         onScanSmsClick = {},
                         onPasteSmsClick = {},
                         onImportFileClick = {},
@@ -569,9 +652,11 @@ class FinanceModuleTest {
         }
 
         composeTestRule.onNodeWithTag("finance_scan_sms_btn").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("finance_paste_sms_btn").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("finance_import_file_btn").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("finance_add_manual_btn").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_add_menu_btn").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_add_menu_btn").performClick()
+        composeTestRule.onNodeWithTag("finance_menu_paste_sms").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_menu_import_file").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_menu_add_manual").assertIsDisplayed()
 
         // Collapsed by default
         composeTestRule.onNodeWithText("BANK / WALLET").assertDoesNotExist()

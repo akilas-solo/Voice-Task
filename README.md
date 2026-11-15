@@ -30,13 +30,12 @@ Because AI Studio's GitHub exporter skips updating binary APK files inside `.bui
 
 > **One-time GitHub repo check:** In your GitHub repository under **Settings -> Actions -> General -> Workflow permissions**, ensure **Read and write permissions** is selected so Actions can update `.build-outputs/app-debug.apk` and publish the Release APK.
 
-## Latest Build Highlights (`v1.2` / `versionCode 3`)
+## Latest Build Highlights (`v1.3` / `versionCode 4`)
 
-- **Finance Stability & 90-Day Background Auto-Scan:** Fixed main-thread stalls and chart normalization crashes when opening Finance after granting `READ_SMS`. Device inbox scans now run off the UI thread with single-flight deduplication covering the last 90 days, pre-compiled regex/date parsers, chunked Room inserts, and virtualized LazyColumn items.
-- **Responsive Balanced Finance UI:** Rebuilt the Finance header with symmetric `Income` / `Outflow` metric tiles, an equal-weight `2x2` action grid (`Scan Inbox`, `Paste SMS`, `Import File`, `Add Entry`), and a collapsible `Filters` panel showing an active filter badge and summary.
-- **Zero-Permission SMS Import Alternatives:** Share alerts directly from Messages (`Share -> Voice Task`), tap the one-tap clipboard bank SMS banner, or import `.csv`, `.txt`, and Android SMS Backup `.xml` files without granting `READ_SMS`.
-- **Interactive Finance Charts:** Safe-bounded `LineChart` trend visualization and interactive `PieChart` breakdown in the Finance Overview screen categorized by **Bank** or **Spending Type**.
-- **AI Financial Q&A & Task Reminders:** Time/day/month financial Q&A, chronological/priority/alphabetical task sorting, and calendar reminder chimes.
+- **Streamlined Material 3 Finance UX:** Unified the duplicate summary cards into a single focal Cashflow & Balances card, consolidated `Paste SMS`, `Import Backup File`, and `Add Manual Entry` into a clean `+` menu, and moved the **AI Financial Analyst** into a modal bottom sheet opened from the top-bar sparkle button.
+- **Ethiopian Bank SMS Parser Perfection:** Strips Telebirr/bank footer sign-offs before classification (eliminating `"using telebirr ethio telecom"` counterparty names and false `"Airtime & Data"` labels on P2P transfers), rejects OTP/failed/promo/balance-only alerts, and adds 1-tap Type/Category re-classification plus raw SMS re-parsing.
+- **Legible Finance Charts & 90-Day Auto-Scan:** Fixed X-axis vertical date wrapping and clipped legends on the trend `LineChart`, backed by off-main-thread 90-day inbox scanning and chunked Room deduplication.
+- **Zero-Permission SMS Import Alternatives & AI Q&A:** Share alerts directly from Messages (`Share -> Voice Task`), tap the clipboard bank SMS banner, or import `.csv`, `.txt`, and `.xml` backups without granting `READ_SMS`.
 
 ## Installing Sideloaded APKs (`Google Play Protect` Notice)
 

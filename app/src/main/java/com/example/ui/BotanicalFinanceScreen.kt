@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
@@ -237,6 +238,35 @@ fun FinanceScreen(
                 inspectingTx = tx.copy(category = newCat)
                 Toast.makeText(context, "Category updated to $newCat", Toast.LENGTH_SHORT).show()
             },
+            onUpdateType = { newType ->
+                viewModel.updateFinanceType(tx, newType)
+                inspectingTx = tx.copy(type = newType.name)
+                Toast.makeText(context, "Type updated to ${newType.label}", Toast.LENGTH_SHORT).show()
+            },
+            onReparse = {
+                viewModel.reparseSingleFinanceTransaction(tx) { kept, msg ->
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    if (!kept) {
+                        inspectingTx = null
+                    } else {
+                        val reparsed = BankSmsParser.parseSms(tx.rawSender, tx.rawSmsBody, tx.timestamp, tx.source)
+                        if (reparsed != null) {
+                            inspectingTx = tx.copy(
+                                bankName = reparsed.bankName,
+                                bankCode = reparsed.bankCode,
+                                type = reparsed.type,
+                                amount = reparsed.amount,
+                                currency = reparsed.currency,
+                                balanceAfter = reparsed.balanceAfter,
+                                serviceCharge = reparsed.serviceCharge,
+                                counterparty = reparsed.counterparty,
+                                referenceId = reparsed.referenceId,
+                                category = reparsed.category
+                            )
+                        }
+                    }
+                }
+            },
             onDelete = {
                 viewModel.deleteFinanceTransaction(tx)
                 inspectingTx = null
@@ -375,13 +405,18 @@ fun FinanceScreen(
             }
         }
 
-        // 2. Hero Cashflow & Latest Bank Balances Card
+        // 2. Single Unified Summary Hero Card (+ Menu, Balances, and Permission Prompt)
         item {
             FinanceHeroSummaryCard(
                 summary = summary,
+                monthlySpendingTotal = monthlySpendingTotal,
+                monthlyIncomeTotal = monthlyIncomeTotal,
+                monthlyLabel = monthlyLabel,
                 filterState = filterState,
                 isScanning = viewModel.isFinanceScanning,
                 hasAnyData = allTransactions.isNotEmpty(),
+                hasSmsPermission = hasSmsPermission(),
+                onRequestSmsPermission = onRequestSmsPermission,
                 onScanSmsClick = triggerSmsScan,
                 onPasteSmsClick = { showPasteSmsDialog = true },
                 onImportFileClick = {
@@ -402,7 +437,7 @@ fun FinanceScreen(
             )
         }
 
-        // 3. Specific Day / Month / Time Window / Bank Filter Controls
+        // 3. Search & Collapsible Filter Drawer
         item {
             FinanceFilterPanel(
                 filterState = filterState,
@@ -417,14 +452,6 @@ fun FinanceScreen(
                 onSelectBank = { viewModel.setFinanceBankFilter(it) },
                 onSelectType = { viewModel.setFinanceTypeFilter(it) },
                 onSearchChange = { viewModel.setFinanceSearchQuery(it) }
-            )
-        }
-
-        // 4. AI Financial Analyst & Conversational Time/Day/Month Q&A Card
-        item {
-            FinanceAiAnalystCard(
-                viewModel = viewModel,
-                summary = summary
             )
         }
 
@@ -534,19 +561,6 @@ private fun LazyListScope.financeOverviewItems(
 ) {
     val primaryCurrency = transactions.firstOrNull()?.currency ?: "ETB"
 
-    item(key = "overview_monthly_card") {
-        MonthlySpendingSummaryCard(
-            monthlySpendingTotal = monthlySpendingTotal,
-            monthlyIncomeTotal = monthlyIncomeTotal,
-            monthlyMonthLabel = monthlyMonthLabel,
-            primaryCurrency = primaryCurrency,
-            bankCount = groupedByBank.size,
-            txCount = transactions.size,
-            hasSmsPermission = hasSmsPermission,
-            onRequestSmsPermission = onRequestSmsPermission
-        )
-    }
-
     item(key = "overview_chart_card") {
         FinanceOverviewChartCard(
             transactions = transactions,
@@ -558,28 +572,23 @@ private fun LazyListScope.financeOverviewItems(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp),
+                .padding(horizontal = 4.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "RECENT TRANSACTIONS BY BANK",
+                text = "RECENT BY BANK",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.8.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (hasSmsPermission) {
-                TextButton(
-                    onClick = onScanSmsClick,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.heightIn(min = 48.dp)
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh SMS", modifier = Modifier.size(15.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Sync SMS", fontSize = 12.sp)
-                }
-            }
+            Text(
+                text = "${groupedByBank.size} Bank(s) · ${transactions.size} tx",
+                fontFamily = StudioMonoFontFamily,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 
@@ -622,17 +631,6 @@ fun FinanceOverviewComposable(
             .testTag("finance_overview_composable"),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        MonthlySpendingSummaryCard(
-            monthlySpendingTotal = monthlySpendingTotal,
-            monthlyIncomeTotal = monthlyIncomeTotal,
-            monthlyMonthLabel = monthlyMonthLabel,
-            primaryCurrency = primaryCurrency,
-            bankCount = groupedByBank.size,
-            txCount = transactions.size,
-            hasSmsPermission = hasSmsPermission,
-            onRequestSmsPermission = onRequestSmsPermission
-        )
-
         FinanceOverviewChartCard(
             transactions = transactions,
             primaryCurrency = primaryCurrency
@@ -646,23 +644,18 @@ fun FinanceOverviewComposable(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "RECENT TRANSACTIONS BY BANK",
+                text = "RECENT BY BANK",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.8.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (hasSmsPermission) {
-                TextButton(
-                    onClick = onScanSmsClick,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.heightIn(min = 48.dp)
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh SMS", modifier = Modifier.size(15.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Sync SMS", fontSize = 12.sp)
-                }
-            }
+            Text(
+                text = "${groupedByBank.size} Bank(s) · ${transactions.size} tx",
+                fontFamily = StudioMonoFontFamily,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         if (groupedByBank.isEmpty()) {
@@ -678,142 +671,6 @@ fun FinanceOverviewComposable(
     }
 }
 
-@Composable
-private fun MonthlySpendingSummaryCard(
-    monthlySpendingTotal: Double,
-    monthlyIncomeTotal: Double,
-    monthlyMonthLabel: String,
-    primaryCurrency: String,
-    bankCount: Int,
-    txCount: Int,
-    hasSmsPermission: Boolean,
-    onRequestSmsPermission: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(22.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("finance_monthly_spending_card")
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "MONTHLY SPENDING TOTAL",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = FinanceAnalyticsEngine.formatMoney(monthlySpendingTotal, primaryCurrency),
-                        fontFamily = FrauncesFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 26.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = BotanicalAmber
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
-                ) {
-                    Text(
-                        text = monthlyMonthLabel,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                    )
-                }
-            }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Income: ${FinanceAnalyticsEngine.formatMoney(monthlyIncomeTotal, primaryCurrency)}",
-                    fontFamily = StudioMonoFontFamily,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = StudioSuccess,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "$bankCount Bank(s) · $txCount tx",
-                    fontFamily = StudioMonoFontFamily,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            if (!hasSmsPermission) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = BotanicalAmber.copy(alpha = 0.14f),
-                    border = BorderStroke(1.dp, BotanicalAmber.copy(alpha = 0.4f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Sms,
-                                contentDescription = "SMS Permission",
-                                tint = BotanicalAmber,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Enable SMS access to auto-read Telebirr, CBE & bank alerts.",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = onRequestSmsPermission,
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("finance_overview_grant_sms_btn")
-                        ) {
-                            Text("Allow", fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun EmptyBankGroupsCard() {
@@ -1050,7 +907,7 @@ private fun FinanceOverviewChartCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "TRANSACTION VISUALIZATION",
+                        text = "VISUALIZATION",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.8.sp,
@@ -1058,9 +915,9 @@ private fun FinanceOverviewChartCard(
                     )
                     Text(
                         text = if (chartMode == OverviewChartMode.TREND_LINE) {
-                            if (categorizeByBank) "Spending Trend by Bank" else "Cashflow Trend Over Time"
+                            if (categorizeByBank) "Spending by Bank" else "Cashflow Trend"
                         } else {
-                            if (categorizeByBank) "Distribution by Bank" else "Breakdown by Spending Type"
+                            if (categorizeByBank) "By Bank" else "Spending Mix"
                         },
                         fontFamily = FrauncesFontFamily,
                         fontWeight = FontWeight.SemiBold,
@@ -1134,7 +991,7 @@ private fun FinanceOverviewChartCard(
                 }
             }
 
-            // Categorization Filter: By Spending Type vs By Bank
+            // Categorization Filter: By Type vs By Bank
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1213,7 +1070,7 @@ private fun FinanceOverviewChartCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Scan your SMS inbox or paste a Telebirr/bank alert to visualize spending trends and bank distribution.",
+                            text = "Tap Sync SMS or use + to paste or import a Telebirr/bank alert.",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1272,11 +1129,14 @@ private fun FinanceOverviewChartCard(
                             fontFamily = StudioMonoFontFamily
                         )
                     }
+                    val xAxisTicks = remember(trendSeries.dateLabels) {
+                        sampleAxisLabels(trendSeries.dateLabels, maxTicks = 4)
+                    }
 
                     LineChart(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(206.dp)
+                            .height(194.dp)
                             .padding(top = 6.dp)
                             .testTag("finance_line_chart"),
                         data = chartLines,
@@ -1285,51 +1145,80 @@ private fun FinanceOverviewChartCard(
                         gridProperties = GridProperties(enabled = true),
                         indicatorProperties = HorizontalIndicatorProperties(
                             enabled = true,
-                            textStyle = labelStyle
+                            textStyle = labelStyle,
+                            contentBuilder = { value -> formatCompactAxisAmount(value) }
                         ),
-                        labelProperties = LabelProperties(
-                            enabled = trendSeries.dateLabels.size >= 2,
-                            labels = trendSeries.dateLabels,
-                            textStyle = labelStyle
-                        ),
+                        labelProperties = LabelProperties(enabled = false),
                         labelHelperProperties = LabelHelperProperties(enabled = false)
                     )
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        trendSeries.lines.forEachIndexed { idx, series ->
-                            val dotColor = when (series.key) {
-                                "OUTFLOW" -> BotanicalAmber
-                                "INCOME" -> StudioSuccess
-                                else -> chartPalette[idx % chartPalette.size]
+                    if (xAxisTicks.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 42.dp, end = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            xAxisTicks.forEach { tick ->
+                                Text(
+                                    text = tick,
+                                    fontFamily = StudioMonoFontFamily,
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    color = axisTextColor
+                                )
                             }
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = dotColor.copy(alpha = 0.12f),
-                                border = BorderStroke(1.dp, dotColor.copy(alpha = 0.35f))
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        trendSeries.lines.withIndex().chunked(2).forEach { rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(dotColor)
-                                    )
-                                    Text(
-                                        text = "${series.label}: ${FinanceAnalyticsEngine.formatMoney(series.totalAmount, primaryCurrency)}",
-                                        fontFamily = StudioMonoFontFamily,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
+                                rowItems.forEach { (idx, series) ->
+                                    val dotColor = when (series.key) {
+                                        "OUTFLOW" -> BotanicalAmber
+                                        "INCOME" -> StudioSuccess
+                                        else -> chartPalette[idx % chartPalette.size]
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = dotColor.copy(alpha = 0.12f),
+                                        border = BorderStroke(1.dp, dotColor.copy(alpha = 0.35f)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(dotColor)
+                                            )
+                                            Text(
+                                                text = "${series.label}: ${FinanceAnalyticsEngine.formatMoney(series.totalAmount, primaryCurrency)}",
+                                                fontFamily = StudioMonoFontFamily,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                                if (rowItems.size == 1) {
+                                    Spacer(modifier = Modifier.weight(1f))
                                 }
                             }
                         }
@@ -1487,12 +1376,36 @@ private fun FinanceOverviewChartCard(
     }
 }
 
+private fun sampleAxisLabels(labels: List<String>, maxTicks: Int = 4): List<String> {
+    if (labels.isEmpty()) return emptyList()
+    if (labels.size <= maxTicks) return labels
+    val indices = (0 until maxTicks).map { step ->
+        ((step.toDouble() / (maxTicks - 1)) * (labels.size - 1)).toInt()
+    }.distinct()
+    return indices.map { labels[it] }
+}
+
+private fun formatCompactAxisAmount(value: Double): String {
+    val abs = kotlin.math.abs(value)
+    return when {
+        abs >= 1_000_000.0 -> String.format(Locale.US, "%.1fM", value / 1_000_000.0)
+        abs >= 1_000.0 -> String.format(Locale.US, "%.1fk", value / 1_000.0)
+        abs >= 100.0 -> String.format(Locale.US, "%.0f", value)
+        else -> String.format(Locale.US, "%.1f", value)
+    }
+}
+
 @Composable
 internal fun FinanceHeroSummaryCard(
     summary: FinanceSummary,
+    monthlySpendingTotal: Double = 0.0,
+    monthlyIncomeTotal: Double = 0.0,
+    monthlyLabel: String = "",
     filterState: FinanceFilterState,
     isScanning: Boolean,
     hasAnyData: Boolean,
+    hasSmsPermission: Boolean = true,
+    onRequestSmsPermission: () -> Unit = {},
     onScanSmsClick: () -> Unit,
     onPasteSmsClick: () -> Unit,
     onImportFileClick: () -> Unit,
@@ -1502,6 +1415,7 @@ internal fun FinanceHeroSummaryCard(
 ) {
     val hasActiveFilter = filterState != FinanceFilterState()
     val netPositive = summary.netFlow >= 0.0
+    var showAddMenu by remember { mutableStateOf(false) }
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -1510,15 +1424,19 @@ internal fun FinanceHeroSummaryCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(18.dp),
+            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Top bar: Active Period Pill on left + Single Sync & [+] Menu on right
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
@@ -1537,7 +1455,7 @@ internal fun FinanceHeroSummaryCard(
                         Spacer(modifier = Modifier.width(6.dp))
                         IconButton(
                             onClick = onResetFilters,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.FilterAltOff,
@@ -1549,22 +1467,115 @@ internal fun FinanceHeroSummaryCard(
                     }
                 }
 
-                if (hasAnyData) {
-                    IconButton(
-                        onClick = onClearAllClick,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = "Clear Finance Ledger",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (hasSmsPermission) {
+                        FilledTonalButton(
+                            onClick = onScanSmsClick,
+                            enabled = !isScanning,
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("finance_scan_sms_btn")
+                        ) {
+                            if (isScanning) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(15.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Syncing", fontSize = 12.sp)
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Sync SMS", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    Box {
+                        FilledIconButton(
+                            onClick = { showAddMenu = true },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("finance_add_menu_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add or import transactions"
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showAddMenu,
+                            onDismissRequest = { showAddMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Paste Bank SMS") },
+                                leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null) },
+                                onClick = {
+                                    showAddMenu = false
+                                    onPasteSmsClick()
+                                },
+                                modifier = Modifier.testTag("finance_menu_paste_sms")
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import Backup File") },
+                                leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null) },
+                                enabled = !isScanning,
+                                onClick = {
+                                    showAddMenu = false
+                                    onImportFileClick()
+                                },
+                                modifier = Modifier.testTag("finance_menu_import_file")
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Add Manual Entry") },
+                                leadingIcon = { Icon(Icons.Default.EditNote, contentDescription = null) },
+                                onClick = {
+                                    showAddMenu = false
+                                    onManualAddClick()
+                                },
+                                modifier = Modifier.testTag("finance_menu_add_manual")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (hasSmsPermission) "Re-scan 90d Inbox" else "Allow & Scan SMS") },
+                                leadingIcon = { Icon(Icons.Default.Sms, contentDescription = null) },
+                                enabled = !isScanning,
+                                onClick = {
+                                    showAddMenu = false
+                                    onScanSmsClick()
+                                },
+                                modifier = Modifier.testTag("finance_menu_scan_sms")
+                            )
+                            if (hasAnyData) {
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                DropdownMenuItem(
+                                    text = { Text("Clear Ledger", color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.DeleteSweep,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    },
+                                    onClick = {
+                                        showAddMenu = false
+                                        onClearAllClick()
+                                    },
+                                    modifier = Modifier.testTag("finance_menu_clear_all")
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            Column {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = "NET CASHFLOW",
                     fontSize = 10.sp,
@@ -1572,18 +1583,22 @@ internal fun FinanceHeroSummaryCard(
                     letterSpacing = 0.8.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "${if (netPositive) "+" else "-"}${FinanceAnalyticsEngine.formatMoney(kotlin.math.abs(summary.netFlow), summary.primaryCurrency)}",
                     fontFamily = FrauncesFontFamily,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 28.sp,
+                    fontSize = 27.sp,
                     color = if (netPositive) StudioSuccess else MaterialTheme.colorScheme.error
                 )
+                val monthlyNote = if (monthlyLabel.isNotBlank()) {
+                    "$monthlyLabel spend ${FinanceAnalyticsEngine.formatMoney(monthlySpendingTotal, summary.primaryCurrency)} · "
+                } else ""
                 Text(
-                    text = "${summary.transactionCount} transaction(s) · Fees ${FinanceAnalyticsEngine.formatMoney(summary.totalFees, summary.primaryCurrency)}",
+                    text = "${monthlyNote}${summary.transactionCount} tx · Fees ${FinanceAnalyticsEngine.formatMoney(summary.totalFees, summary.primaryCurrency)}",
                     fontFamily = StudioMonoFontFamily,
                     fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -1669,11 +1684,17 @@ internal fun FinanceHeroSummaryCard(
                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                             ) {
-                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Column(
+                                    modifier = Modifier
+                                        .widthIn(min = 104.dp, max = 164.dp)
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
                                     Text(
-                                        text = b.bankName,
+                                        text = BankInstitution.fromCode(b.bankCode).shortBadge.ifBlank { b.bankName },
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Text(
@@ -1681,6 +1702,7 @@ internal fun FinanceHeroSummaryCard(
                                         fontFamily = StudioMonoFontFamily,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
@@ -1690,83 +1712,46 @@ internal fun FinanceHeroSummaryCard(
                 }
             }
 
-            // Balanced 2x2 Action Grid
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+            if (!hasSmsPermission) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = BotanicalAmber.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, BotanicalAmber.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Button(
-                        onClick = onScanSmsClick,
-                        enabled = !isScanning,
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("finance_scan_sms_btn")
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        if (isScanning) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Sms,
+                                contentDescription = "SMS Permission",
+                                tint = BotanicalAmber,
+                                modifier = Modifier.size(18.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Scanning...", fontSize = 12.sp, maxLines = 1)
-                        } else {
-                            Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(17.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Scan Inbox", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Allow SMS access to auto-read bank alerts, or tap + to paste/import.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
-                    }
-
-                    OutlinedButton(
-                        onClick = onPasteSmsClick,
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("finance_paste_sms_btn")
-                    ) {
-                        Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Paste SMS", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onImportFileClick,
-                        enabled = !isScanning,
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("finance_import_file_btn")
-                    ) {
-                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Import File", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-
-                    OutlinedButton(
-                        onClick = onManualAddClick,
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("finance_add_manual_btn")
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Add Entry", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = onRequestSmsPermission,
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("finance_overview_grant_sms_btn")
+                        ) {
+                            Text("Allow", fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -2065,6 +2050,36 @@ internal fun FinanceFilterPanel(
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FinanceAiModalSheet(
+    viewModel: VoiceTaskViewModel,
+    onDismiss: () -> Unit
+) {
+    val summary by viewModel.financeSummary.collectAsStateWithLifecycle()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            FinanceAiAnalystCard(
+                viewModel = viewModel,
+                summary = summary
+            )
         }
     }
 }
@@ -3021,8 +3036,11 @@ private fun TransactionDetailDialog(
     tx: FinanceTransaction,
     onDismiss: () -> Unit,
     onUpdateCategory: (String) -> Unit,
+    onUpdateType: (TransactionType) -> Unit,
+    onReparse: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
     val dateFmt = remember { SimpleDateFormat("EEE, MMM dd yyyy · HH:mm:ss", Locale.ENGLISH) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3056,6 +3074,20 @@ private fun TransactionDetailDialog(
                 }
 
                 HorizontalDivider()
+                Text("Transaction Flow", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    TransactionType.entries.forEach { t ->
+                        BotanicalFilterChip(
+                            label = t.label,
+                            selected = tx.transactionType == t,
+                            onClick = { onUpdateType(t) }
+                        )
+                    }
+                }
+
                 Text("Category", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -3071,7 +3103,37 @@ private fun TransactionDetailDialog(
                 }
 
                 HorizontalDivider()
-                Text("Raw SMS Message", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Raw SMS Message", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (tx.rawSmsBody.isNotBlank()) {
+                            TextButton(
+                                onClick = {
+                                    runCatching {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        cm?.setPrimaryClip(ClipData.newPlainText("Bank SMS", tx.rawSmsBody))
+                                        Toast.makeText(context, "Raw SMS copied", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.testTag("tx_copy_raw_sms_btn")
+                            ) {
+                                Text("Copy", fontSize = 11.sp)
+                            }
+                            TextButton(
+                                onClick = onReparse,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.testTag("tx_reparse_sms_btn")
+                            ) {
+                                Text("Re-parse", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),

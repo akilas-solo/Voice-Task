@@ -76,6 +76,53 @@ class VoiceTaskRepository(private val voiceTaskDao: VoiceTaskDao) {
 
     suspend fun clearAllFinanceTransactions() = voiceTaskDao.clearAllFinanceTransactions()
 
+    suspend fun reparseStoredSmsTransactions(): Pair<Int, Int> {
+        val all = voiceTaskDao.getAllFinanceTransactions()
+        var updatedCount = 0
+        var removedCount = 0
+        for (tx in all) {
+            if (tx.source == "MANUAL_ENTRY" || tx.rawSmsBody.isBlank()) continue
+            val reparsed = BankSmsParser.parseSms(
+                sender = tx.rawSender,
+                body = tx.rawSmsBody,
+                receivedTimestampMs = tx.timestamp,
+                source = tx.source
+            )
+            if (reparsed == null) {
+                voiceTaskDao.deleteFinanceTransactionById(tx.id)
+                removedCount++
+            } else {
+                val changed = reparsed.bankName != tx.bankName ||
+                    reparsed.bankCode != tx.bankCode ||
+                    reparsed.type != tx.type ||
+                    reparsed.amount != tx.amount ||
+                    reparsed.balanceAfter != tx.balanceAfter ||
+                    reparsed.serviceCharge != tx.serviceCharge ||
+                    reparsed.counterparty != tx.counterparty ||
+                    reparsed.referenceId != tx.referenceId ||
+                    reparsed.category != tx.category
+                if (changed) {
+                    voiceTaskDao.updateFinanceTransaction(
+                        tx.copy(
+                            bankName = reparsed.bankName,
+                            bankCode = reparsed.bankCode,
+                            type = reparsed.type,
+                            amount = reparsed.amount,
+                            currency = reparsed.currency,
+                            balanceAfter = reparsed.balanceAfter,
+                            serviceCharge = reparsed.serviceCharge,
+                            counterparty = reparsed.counterparty,
+                            referenceId = reparsed.referenceId,
+                            category = reparsed.category
+                        )
+                    )
+                    updatedCount++
+                }
+            }
+        }
+        return updatedCount to removedCount
+    }
+
     suspend fun exportBackupJson(): String {
         val tasks = voiceTaskDao.getAllTasks()
         val rootArray = JSONArray()
