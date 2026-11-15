@@ -19,3 +19,20 @@ View your app in AI Studio: https://ai.studio/apps/1af989eb-4fea-4e2f-98a7-10a77
 4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
 5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
 6. Run the app on an emulator or physical device
+
+## Automated GitHub Builds (CI)
+
+Because Android build output folders are excluded from Git commits, pushing this repository triggers the **Android CI Build & Test** workflow in GitHub Actions:
+
+1. Push your changes to GitHub.
+2. Open your repository's **Actions** tab on GitHub.
+3. Open the latest **Android CI Build & Test** run.
+4. Download **`app-debug-apk`** from the **Artifacts** section to install the latest build.
+
+## Latest Build Highlights (`v1.1` / `versionCode 2`)
+
+- **Finance Module & Bank SMS Parsing:** Reads Telebirr, CBE, Bank of Abyssinia, Awash, and other bank SMS alerts with runtime `READ_SMS` permission handling and Room deduplication.
+- **Interactive Finance Charts:** Includes `LineChart` trend visualization and interactive `PieChart` breakdown in the Finance Overview screen categorized by **Bank** or **Spending Type**.
+- **AI Financial Q&A:** Answers questions filtered by specific time-of-day, day, or month.
+- **Task Sorting & Reminder Picker:** Chronological, priority, and alphabetical sorting plus calendar date/time presets and botanical alarm chimes.
+
