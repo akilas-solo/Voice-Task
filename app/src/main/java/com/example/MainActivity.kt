@@ -231,7 +231,7 @@ fun MainLayout(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            viewModel.scanDeviceSmsInbox()
+            viewModel.scanDeviceSmsInbox(sinceDays = 90, silent = false)
         } else {
             val activity = context as? Activity
             val permanentlyDenied = activity != null &&
@@ -252,7 +252,7 @@ fun MainLayout(
         val activity = context as? Activity
         when {
             SmsInboxReader.hasReadSmsPermission(context) -> {
-                viewModel.scanDeviceSmsInbox()
+                viewModel.scanDeviceSmsInbox(sinceDays = 90, silent = false)
             }
             activity != null && ActivityCompat.shouldShowRequestPermissionRationale(
                 activity,

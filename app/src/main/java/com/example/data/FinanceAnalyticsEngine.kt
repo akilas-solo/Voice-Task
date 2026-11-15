@@ -52,7 +52,16 @@ data class ChartTrendLineSeries(
 data class ChartTrendSeries(
     val dateLabels: List<String>,
     val lines: List<ChartTrendLineSeries>
-)
+) {
+    val maxPointValue: Double
+        get() = lines.flatMap { it.values }.filter { it.isFinite() }.maxOrNull() ?: 0.0
+
+    val hasPlottableSeries: Boolean
+        get() = dateLabels.size >= 2 &&
+            lines.isNotEmpty() &&
+            lines.all { it.values.size == dateLabels.size } &&
+            maxPointValue > 0.0
+}
 
 data class ChartCategorySlice(
     val key: String,
@@ -74,7 +83,8 @@ data class FinanceSummary(
     val periodLabel: String = "All Time",
     val bankBreakdowns: List<BankBreakdownStat> = emptyList(),
     val categoryBreakdowns: List<CategoryBreakdownStat> = emptyList(),
-    val timeSlotStats: List<TimeSlotStat> = emptyList()
+    val timeSlotStats: List<TimeSlotStat> = emptyList(),
+    val bankGroups: List<BankGroupedTransactions> = emptyList()
 )
 
 data class ParsedFinanceQuery(
@@ -196,17 +206,17 @@ object FinanceAnalyticsEngine {
             val topBanks = transactions
                 .groupBy { it.bankCode to it.bankName }
                 .map { (pair, list) ->
-                    val vol = list.filter { !useOutflowOnly || it.isOutgoing }.sumOf { it.amount }
+                    val vol = list.filter { (!useOutflowOnly || it.isOutgoing) && it.amount.isFinite() && it.amount > 0.0 }.sumOf { it.amount }
                     Triple(pair.first, pair.second, vol)
                 }
-                .filter { it.third > 0.0 }
+                .filter { it.third.isFinite() && it.third > 0.0 }
                 .sortedByDescending { it.third }
                 .take(4)
 
             val lines = topBanks.map { (bankCode, bankName, totalVol) ->
                 val dayValues = dayEntries.map { (_, dayTxs) ->
                     dayTxs.filter {
-                        it.bankCode == bankCode && (!useOutflowOnly || it.isOutgoing)
+                        it.bankCode == bankCode && (!useOutflowOnly || it.isOutgoing) && it.amount.isFinite() && it.amount > 0.0
                     }.sumOf { it.amount }
                 }
                 val paddedValues = if (needsBaselinePoint) listOf(0.0) + dayValues else dayValues
@@ -220,17 +230,17 @@ object FinanceAnalyticsEngine {
             return ChartTrendSeries(dateLabels = finalLabels, lines = lines)
         } else {
             val outflowValues = dayEntries.map { (_, dayTxs) ->
-                dayTxs.filter { it.isOutgoing }.sumOf { it.amount }
+                dayTxs.filter { it.isOutgoing && it.amount.isFinite() && it.amount > 0.0 }.sumOf { it.amount }
             }.let { if (needsBaselinePoint) listOf(0.0) + it else it }
 
             val incomeValues = dayEntries.map { (_, dayTxs) ->
-                dayTxs.filter { it.isIncoming }.sumOf { it.amount }
+                dayTxs.filter { it.isIncoming && it.amount.isFinite() && it.amount > 0.0 }.sumOf { it.amount }
             }.let { if (needsBaselinePoint) listOf(0.0) + it else it }
 
             val totalOutflow = outflowValues.sum()
             val totalIncome = incomeValues.sum()
             val lines = buildList {
-                if (totalOutflow > 0.0 || totalIncome == 0.0) {
+                if (totalOutflow > 0.0) {
                     add(
                         ChartTrendLineSeries(
                             key = "OUTFLOW",
@@ -260,9 +270,10 @@ object FinanceAnalyticsEngine {
         categorizeByBank: Boolean,
         maxSlices: Int = 5
     ): List<ChartCategorySlice> {
-        if (transactions.isEmpty()) return emptyList()
-        val outflows = transactions.filter { it.isOutgoing }
-        val sourceList = if (outflows.isNotEmpty()) outflows else transactions
+        val finiteTxs = transactions.filter { it.amount.isFinite() && it.amount > 0.0 }
+        if (finiteTxs.isEmpty()) return emptyList()
+        val outflows = finiteTxs.filter { it.isOutgoing }
+        val sourceList = if (outflows.isNotEmpty()) outflows else finiteTxs
         val total = sourceList.sumOf { it.amount }.coerceAtLeast(0.01)
 
         val rawGroups = if (categorizeByBank) {
@@ -287,7 +298,7 @@ object FinanceAnalyticsEngine {
                     transactionCount = list.size
                 )
             }
-        }.sortedByDescending { it.amount }
+        }.filter { it.amount.isFinite() && it.amount > 0.0 }.sortedByDescending { it.amount }
 
         if (rawGroups.size <= maxSlices) return rawGroups
 
@@ -527,7 +538,8 @@ object FinanceAnalyticsEngine {
             periodLabel = periodLabel,
             bankBreakdowns = bankStats,
             categoryBreakdowns = catStats,
-            timeSlotStats = slotStats
+            timeSlotStats = slotStats,
+            bankGroups = groupRecentTransactionsByBank(filtered, limitPerBank = 5)
         )
     }
 

@@ -65,15 +65,36 @@ object BankSmsParser {
         """(?i)\bfor\s+([A-Za-z][A-Za-z0-9\s.&'-]{2,40}?)(?=\s+on\s+\d|\s+at\s+\d|\.\s|$)"""
     )
 
+    private val WHITESPACE_REGEX = Regex("""\s+""")
+    private val BLANK_LINE_SPLIT_REGEX = Regex("""\n\s*\n+""")
+    private val CBE_WORD_REGEX = Regex("""\bcbe\b""")
+    private val BOA_WORD_REGEX = Regex("""\bboa\b""")
+    private val NIB_WORD_REGEX = Regex("""\bnib\b""")
+
+    private val DATE_TIME_PATTERNS: List<Pair<Regex, String>> = listOf(
+        Regex("""(\d{2}/\d{2}/\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "dd/MM/yyyy HH:mm:ss",
+        Regex("""(\d{2}/\d{2}/\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2})""") to "dd/MM/yyyy HH:mm",
+        Regex("""(\d{4}-\d{2}-\d{2})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "yyyy-MM-dd HH:mm:ss",
+        Regex("""(\d{4}-\d{2}-\d{2})\s+(?:at\s+)?(\d{1,2}:\d{2})""") to "yyyy-MM-dd HH:mm",
+        Regex("""(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "dd-MMM-yyyy HH:mm:ss",
+        Regex("""(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2})""") to "dd-MMM-yyyy HH:mm",
+        Regex("""(\d{2}-\d{2}-\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "dd-MM-yyyy HH:mm:ss",
+        Regex("""(\d{2}-\d{2}-\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2})""") to "dd-MM-yyyy HH:mm"
+    )
+
+    private val DATE_FORMAT_CACHE = ThreadLocal.withInitial { mutableMapOf<String, SimpleDateFormat>() }
+    private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
     fun parseSms(
         sender: String,
         body: String,
         receivedTimestampMs: Long = System.currentTimeMillis(),
         source: String = "SMS_INBOX"
     ): FinanceTransaction? {
-        val cleanSender = sender.trim()
-        val cleanBody = body.trim()
-        if (cleanBody.length < 12) return null
+        val cleanSender = sender.trim().take(64)
+        val trimmedBody = body.trim()
+        if (trimmedBody.length < 12) return null
+        val cleanBody = if (trimmedBody.length > 1500) trimmedBody.take(1500) else trimmedBody
 
         val hasOtpWithoutBalance = OTP_EXCLUDE_REGEX.containsMatchIn(cleanBody) &&
             !cleanBody.contains("balance", ignoreCase = true)
@@ -97,7 +118,7 @@ object BankSmsParser {
         val excludedRanges = listOfNotNull(balanceMatch?.range, feeMatch?.range)
         val primaryAmountAndCurrency = extractPrimaryAmount(cleanBody, excludedRanges) ?: return null
         val (amount, rawCurrency) = primaryAmountAndCurrency
-        if (amount <= 0.0) return null
+        if (!amount.isFinite() || amount <= 0.0) return null
 
         val normalizedCurrency = normalizeCurrency(rawCurrency)
         val txType = detectTransactionType(cleanBody)
@@ -127,7 +148,7 @@ object BankSmsParser {
             referenceId = referenceId,
             category = category,
             rawSender = cleanSender.ifBlank { displayBankName },
-            rawSmsBody = cleanBody,
+            rawSmsBody = trimmedBody.take(1500),
             timestamp = effectiveTimestamp,
             source = source
         )
@@ -142,7 +163,7 @@ object BankSmsParser {
         if (clean.isBlank()) return emptyList()
 
         // Split by blank lines if user pasted multiple SMS blocks at once; otherwise treat as 1 or line-separated SMS
-        val blocks = clean.split(Regex("""\n\s*\n+""")).map { it.trim() }.filter { it.isNotBlank() }
+        val blocks = clean.split(BLANK_LINE_SPLIT_REGEX).map { it.trim() }.filter { it.isNotBlank() }
         val parsedBlocks = blocks.mapIndexedNotNull { idx, block ->
             parseSms(
                 sender = defaultSender,
@@ -174,13 +195,13 @@ object BankSmsParser {
             combined.contains("telebirr") || sender.trim() == "127" -> BankInstitution.TELEBIRR
             combined.contains("cbebirr") || combined.contains("cbe birr") || combined.contains("cbe-birr") -> BankInstitution.CBE_BIRR
             combined.contains("commercial bank of ethiopia") ||
-                Regex("""\bcbe\b""").containsMatchIn(combined) -> BankInstitution.CBE
+                CBE_WORD_REGEX.containsMatchIn(combined) -> BankInstitution.CBE
             combined.contains("abyssinia") ||
-                Regex("""\bboa\b""").containsMatchIn(combined) ||
+                BOA_WORD_REGEX.containsMatchIn(combined) ||
                 sender.trim() == "8115" -> BankInstitution.BOA
             combined.contains("awash") -> BankInstitution.AWASH
             combined.contains("dashen") || combined.contains("amole") -> BankInstitution.DASHEN
-            combined.contains("nib bank") || Regex("""\bnib\b""").containsMatchIn(combined) -> BankInstitution.NIB
+            combined.contains("nib bank") || NIB_WORD_REGEX.containsMatchIn(combined) -> BankInstitution.NIB
             combined.contains("coop") || combined.contains("cooperative bank") || combined.contains("ebirr") -> BankInstitution.COOP
             combined.contains("hibret") -> BankInstitution.HIBRET
             combined.contains("zemen") -> BankInstitution.ZEMEN
@@ -311,7 +332,7 @@ object BankSmsParser {
 
     private fun cleanCounterparty(raw: String): String {
         return raw
-            .replace(Regex("""\s+"""), " ")
+            .replace(WHITESPACE_REGEX, " ")
             .trim()
             .trimEnd('.', ',', ';', ':')
             .take(42)
@@ -343,24 +364,15 @@ object BankSmsParser {
     }
 
     fun extractEmbeddedTimestamp(body: String): Long? {
-        // Supports common Ethiopian SMS date/time formats:
-        // "13/11/2026 14:25:10", "13/11/2026 at 14:25", "13-Nov-2026 at 10:15:00", "2026-11-13 14:25:10", "13-11-2026 02:25 PM"
-        val dateTimePatterns = listOf(
-            Regex("""(\d{2}/\d{2}/\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "dd/MM/yyyy HH:mm:ss",
-            Regex("""(\d{2}/\d{2}/\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2})""") to "dd/MM/yyyy HH:mm",
-            Regex("""(\d{4}-\d{2}-\d{2})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "yyyy-MM-dd HH:mm:ss",
-            Regex("""(\d{4}-\d{2}-\d{2})\s+(?:at\s+)?(\d{1,2}:\d{2})""") to "yyyy-MM-dd HH:mm",
-            Regex("""(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "dd-MMM-yyyy HH:mm:ss",
-            Regex("""(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2})""") to "dd-MMM-yyyy HH:mm",
-            Regex("""(\d{2}-\d{2}-\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "dd-MM-yyyy HH:mm:ss",
-            Regex("""(\d{2}-\d{2}-\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2})""") to "dd-MM-yyyy HH:mm"
-        )
-        for ((regex, pattern) in dateTimePatterns) {
+        val cache = DATE_FORMAT_CACHE.get()!!
+        for ((regex, pattern) in DATE_TIME_PATTERNS) {
             val match = regex.find(body) ?: continue
             val combined = "${match.groupValues[1]} ${match.groupValues[2]}"
-            val sdf = SimpleDateFormat(pattern, Locale.ENGLISH).apply {
-                isLenient = false
-                timeZone = TimeZone.getDefault()
+            val sdf = cache.getOrPut(pattern) {
+                SimpleDateFormat(pattern, Locale.ENGLISH).apply {
+                    isLenient = false
+                    timeZone = TimeZone.getDefault()
+                }
             }
             val parsed = runCatching { sdf.parse(combined)?.time }.getOrNull()
             if (parsed != null) return parsed
@@ -383,10 +395,16 @@ object BankSmsParser {
 
     fun computeFingerprint(sender: String, body: String, timestampMs: Long): String {
         val minuteBucket = timestampMs / 60_000L
-        val normalizedBody = body.lowercase(Locale.ROOT).replace(Regex("""\s+"""), " ").trim()
+        val normalizedBody = body.lowercase(Locale.ROOT).replace(WHITESPACE_REGEX, " ").trim()
         val normalizedSender = sender.lowercase(Locale.ROOT).trim()
         val input = "$normalizedSender|$normalizedBody|$minuteBucket"
         val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }.take(32)
+        val chars = CharArray(32)
+        for (i in 0 until 16) {
+            val b = digest[i].toInt() and 0xFF
+            chars[i * 2] = HEX_CHARS[b ushr 4]
+            chars[i * 2 + 1] = HEX_CHARS[b and 0x0F]
+        }
+        return String(chars)
     }
 }

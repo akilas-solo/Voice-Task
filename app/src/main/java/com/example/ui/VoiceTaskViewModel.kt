@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -302,11 +303,13 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         _financeFilterState
     ) { transactions, filter ->
         FinanceAnalyticsEngine.filterTransactions(transactions, filter)
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyList()
-    )
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     val financeSummary: StateFlow<FinanceSummary> = combine(
         filteredFinanceTransactions,
@@ -315,11 +318,26 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     ) { filtered, all, filter ->
         val label = FinanceAnalyticsEngine.describePeriodLabel(filter)
         FinanceAnalyticsEngine.summarize(filtered, all, label)
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = FinanceSummary()
-    )
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = FinanceSummary()
+        )
+
+    val monthlyFinanceTotals: StateFlow<Pair<Double, Double>> = allFinanceTransactions
+        .map { txs ->
+            val nowMs = System.currentTimeMillis()
+            FinanceAnalyticsEngine.computeMonthlySpendingTotal(txs, nowMs) to
+                FinanceAnalyticsEngine.computeMonthlyIncomeTotal(txs, nowMs)
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = 0.0 to 0.0
+        )
 
     var isFinanceScanning by mutableStateOf(false)
         private set
@@ -341,6 +359,9 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         private set
 
     private val dismissedClipboardHashes = mutableSetOf<String>()
+    private var clipboardInspectJob: Job? = null
+    private var financeScanJob: Job? = null
+    private var lastAutoScanCompletedAtMs: Long = 0L
 
     fun clearFinanceStatusBanner() {
         financeStatusMessage = null
@@ -350,35 +371,37 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     fun inspectClipboardForBankSms(rawClipboardText: String?) {
         val text = rawClipboardText?.trim().orEmpty()
         if (text.length < 12) {
+            clipboardInspectJob?.cancel()
             clipboardBankPromptText = null
             clipboardDetectedSummary = null
             return
         }
-        val hash = BankSmsParser.computeFingerprint("clipboard", text, 0L)
-        if (hash in dismissedClipboardHashes) {
-            clipboardBankPromptText = null
-            clipboardDetectedSummary = null
-            return
-        }
-        val parsed = BankSmsParser.parseBatchRawText(text, defaultSender = "Clipboard SMS")
-        if (parsed.isEmpty()) {
-            clipboardBankPromptText = null
-            clipboardDetectedSummary = null
-            return
-        }
-        val existingFingerprints = allFinanceTransactions.value.mapTo(mutableSetOf()) { it.smsFingerprint }
-        val newMatches = parsed.filter { it.smsFingerprint !in existingFingerprints }
-        if (newMatches.isEmpty()) {
-            clipboardBankPromptText = null
-            clipboardDetectedSummary = null
-            return
-        }
-        val first = newMatches.first()
-        clipboardBankPromptText = text
-        clipboardDetectedSummary = if (newMatches.size == 1) {
-            "${first.bankName} · ${FinanceAnalyticsEngine.formatSignedMoney(first)}"
-        } else {
-            "${newMatches.size} bank alerts detected (${first.bankName} & more)"
+        val existingSnapshot = allFinanceTransactions.value
+        clipboardInspectJob?.cancel()
+        clipboardInspectJob = viewModelScope.launch {
+            val matchResult = withContext(Dispatchers.Default) {
+                val hash = BankSmsParser.computeFingerprint("clipboard", text, 0L)
+                if (hash in dismissedClipboardHashes) return@withContext null
+                val parsed = BankSmsParser.parseBatchRawText(text, defaultSender = "Clipboard SMS")
+                if (parsed.isEmpty()) return@withContext null
+                val existingFingerprints = existingSnapshot.mapTo(mutableSetOf()) { it.smsFingerprint }
+                val newMatches = parsed.filter { it.smsFingerprint !in existingFingerprints }
+                if (newMatches.isEmpty()) return@withContext null
+                val first = newMatches.first()
+                val summary = if (newMatches.size == 1) {
+                    "${first.bankName} · ${FinanceAnalyticsEngine.formatSignedMoney(first)}"
+                } else {
+                    "${newMatches.size} bank alerts detected (${first.bankName} & more)"
+                }
+                text to summary
+            }
+            if (matchResult == null) {
+                clipboardBankPromptText = null
+                clipboardDetectedSummary = null
+            } else {
+                clipboardBankPromptText = matchResult.first
+                clipboardDetectedSummary = matchResult.second
+            }
         }
     }
 
@@ -513,41 +536,62 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         _financeFilterState.value = FinanceFilterState()
     }
 
-    fun scanDeviceSmsInbox(sinceDays: Int? = null, silent: Boolean = false) {
-        if (isFinanceScanning) return
-        viewModelScope.launch {
-            if (!silent) {
+    fun scanDeviceSmsInbox(sinceDays: Int? = 90, silent: Boolean = false) {
+        val nowMs = System.currentTimeMillis()
+        if (financeScanJob?.isActive == true) {
+            // Avoid overlapping scans; if user explicitly requests a scan while a silent background scan runs, upgrade status visibility
+            if (!silent && !isFinanceScanning) {
                 isFinanceScanning = true
-                financeStatusMessage = "Scanning SMS inbox for Telebirr, CBE, Bank of Abyssinia & bank alerts..."
+                financeStatusMessage = "Scanning last ${sinceDays ?: 90} days of SMS alerts..."
                 financeStatusIsError = false
             }
-            val sinceMs = sinceDays?.let { System.currentTimeMillis() - it * 86_400_000L }
-            val result = SmsInboxReader.scanInbox(getApplication(), sinceTimestampMs = sinceMs)
-            if (!result.permissionGranted) {
+            return
+        }
+        if (silent && (nowMs - lastAutoScanCompletedAtMs) < 30_000L) {
+            return
+        }
+        financeScanJob = viewModelScope.launch {
+            try {
                 if (!silent) {
-                    financeStatusMessage = result.errorMessage ?: "SMS permission is required."
-                    financeStatusIsError = true
-                }
-            } else if (result.errorMessage != null && result.parsedTransactions.isEmpty()) {
-                if (!silent) {
-                    financeStatusMessage = result.errorMessage
-                    financeStatusIsError = true
-                }
-            } else {
-                val newlyInserted = repository.insertFinanceTransactionsDedup(result.parsedTransactions)
-                if (!silent) {
-                    val banksList = result.parsedTransactions.map { it.bankName }.distinct().take(4).joinToString(", ")
-                    financeStatusMessage = if (result.parsedTransactions.isEmpty()) {
-                        "Checked ${result.totalMessagesScanned} SMS messages — no new bank transactions found. You can also paste SMS text directly."
-                    } else if (newlyInserted == 0) {
-                        "Checked ${result.totalMessagesScanned} SMS (${result.parsedTransactions.size} bank alerts verified, all already synced)."
-                    } else {
-                        "Imported $newlyInserted new transaction(s) from ${result.totalMessagesScanned} SMS ($banksList)."
-                    }
+                    isFinanceScanning = true
+                    val scopeLabel = if (sinceDays != null) "last $sinceDays days of SMS" else "SMS inbox"
+                    financeStatusMessage = "Scanning $scopeLabel for Telebirr, CBE & bank alerts..."
                     financeStatusIsError = false
                 }
+                val sinceMs = sinceDays?.let { System.currentTimeMillis() - it.toLong() * 86_400_000L }
+                val result = SmsInboxReader.scanInbox(getApplication(), sinceTimestampMs = sinceMs)
+                if (!result.permissionGranted) {
+                    if (!silent) {
+                        financeStatusMessage = result.errorMessage ?: "SMS permission is required."
+                        financeStatusIsError = true
+                    }
+                } else if (result.errorMessage != null && result.parsedTransactions.isEmpty()) {
+                    if (!silent) {
+                        financeStatusMessage = result.errorMessage
+                        financeStatusIsError = true
+                    }
+                } else {
+                    val newlyInserted = withContext(Dispatchers.IO) {
+                        repository.insertFinanceTransactionsDedup(result.parsedTransactions)
+                    }
+                    lastAutoScanCompletedAtMs = System.currentTimeMillis()
+                    if (!silent || newlyInserted > 0) {
+                        val banksList = result.parsedTransactions.map { it.bankName }.distinct().take(4).joinToString(", ")
+                        if (!silent) {
+                            financeStatusMessage = if (result.parsedTransactions.isEmpty()) {
+                                "Checked ${result.totalMessagesScanned} SMS — no new bank alerts found in the last ${sinceDays ?: 90} days."
+                            } else if (newlyInserted == 0) {
+                                "Checked ${result.totalMessagesScanned} SMS (${result.parsedTransactions.size} bank alerts verified, all synced)."
+                            } else {
+                                "Imported $newlyInserted new transaction(s) from ${result.totalMessagesScanned} SMS ($banksList)."
+                            }
+                            financeStatusIsError = false
+                        }
+                    }
+                }
+            } finally {
+                isFinanceScanning = false
             }
-            isFinanceScanning = false
         }
     }
 
@@ -1523,7 +1567,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             syncTelegramNow(silent = true)
         }
         if (SmsInboxReader.hasReadSmsPermission(getApplication())) {
-            scanDeviceSmsInbox(sinceDays = 14, silent = true)
+            scanDeviceSmsInbox(sinceDays = 90, silent = true)
         }
     }
 

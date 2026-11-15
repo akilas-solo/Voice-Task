@@ -30,13 +30,13 @@ Because AI Studio's GitHub exporter skips updating binary APK files inside `.bui
 
 > **One-time GitHub repo check:** In your GitHub repository under **Settings -> Actions -> General -> Workflow permissions**, ensure **Read and write permissions** is selected so Actions can update `.build-outputs/app-debug.apk` and publish the Release APK.
 
-## Latest Build Highlights (`v1.1` / `versionCode 2`)
+## Latest Build Highlights (`v1.2` / `versionCode 3`)
 
-- **Finance Module & Bank SMS Parsing:** Reads Telebirr, CBE, Bank of Abyssinia, Awash, and other bank SMS alerts with runtime `READ_SMS` permission handling and Room deduplication.
+- **Finance Stability & 90-Day Background Auto-Scan:** Fixed main-thread stalls and chart normalization crashes when opening Finance after granting `READ_SMS`. Device inbox scans now run off the UI thread with single-flight deduplication covering the last 90 days, pre-compiled regex/date parsers, chunked Room inserts, and virtualized LazyColumn items.
+- **Responsive Balanced Finance UI:** Rebuilt the Finance header with symmetric `Income` / `Outflow` metric tiles, an equal-weight `2x2` action grid (`Scan Inbox`, `Paste SMS`, `Import File`, `Add Entry`), and a collapsible `Filters` panel showing an active filter badge and summary.
 - **Zero-Permission SMS Import Alternatives:** Share alerts directly from Messages (`Share -> Voice Task`), tap the one-tap clipboard bank SMS banner, or import `.csv`, `.txt`, and Android SMS Backup `.xml` files without granting `READ_SMS`.
-- **Interactive Finance Charts:** Includes `LineChart` trend visualization and interactive `PieChart` breakdown in the Finance Overview screen categorized by **Bank** or **Spending Type**.
-- **AI Financial Q&A:** Answers questions filtered by specific time-of-day, day, or month.
-- **Task Sorting & Reminder Picker:** Chronological, priority, and alphabetical sorting plus calendar date/time presets and botanical alarm chimes.
+- **Interactive Finance Charts:** Safe-bounded `LineChart` trend visualization and interactive `PieChart` breakdown in the Finance Overview screen categorized by **Bank** or **Spending Type**.
+- **AI Financial Q&A & Task Reminders:** Time/day/month financial Q&A, chronological/priority/alphabetical task sorting, and calendar reminder chimes.
 
 ## Installing Sideloaded APKs (`Google Play Protect` Notice)
 

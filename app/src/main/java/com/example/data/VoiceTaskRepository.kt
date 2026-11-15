@@ -61,8 +61,13 @@ class VoiceTaskRepository(private val voiceTaskDao: VoiceTaskDao) {
 
     suspend fun insertFinanceTransactionsDedup(list: List<FinanceTransaction>): Int {
         if (list.isEmpty()) return 0
-        val results = voiceTaskDao.insertFinanceTransactions(list)
-        return results.count { it > 0L }
+        val distinct = list.distinctBy { it.smsFingerprint }
+        var insertedCount = 0
+        distinct.chunked(200).forEach { chunk ->
+            val results = voiceTaskDao.insertFinanceTransactions(chunk)
+            insertedCount += results.count { it > 0L }
+        }
+        return insertedCount
     }
 
     suspend fun updateFinanceTransaction(tx: FinanceTransaction) = voiceTaskDao.updateFinanceTransaction(tx)

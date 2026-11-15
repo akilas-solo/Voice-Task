@@ -14,11 +14,28 @@ import com.example.data.FinanceTransaction
 import com.example.data.TimeOfDayPreset
 import com.example.data.TransactionType
 import com.example.data.VoiceTaskRepository
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import com.example.data.FinanceSummary
+import com.example.ui.FinanceFilterPanel
+import com.example.ui.FinanceHeroSummaryCard
+import com.example.ui.FinanceOverviewComposable
+import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -28,6 +45,9 @@ import java.util.Calendar
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class FinanceModuleTest {
+
+    @get:Rule
+    val composeTestRule = createComposeRule()
 
     @Test
     fun `parses Telebirr transfer and received SMS accurately`() {
@@ -400,5 +420,168 @@ class FinanceModuleTest {
         assertEquals(2, txtRes.parsedTransactions.size)
         assertEquals(BankInstitution.AWASH.code, txtRes.parsedTransactions[0].bankCode)
         assertEquals(BankInstitution.DASHEN.code, txtRes.parsedTransactions[1].bankCode)
+    }
+
+    @Test
+    fun `trend chart and pie slice builders handle single-day, flat, and non-finite inputs safely`() {
+        val singleDayIncome = listOf(
+            FinanceTransaction(
+                id = 10,
+                smsFingerprint = "sd1",
+                bankName = "CBE",
+                bankCode = BankInstitution.CBE.code,
+                type = TransactionType.INCOME.name,
+                amount = 12500.0,
+                category = "Income / Deposit",
+                timestamp = 1763020800000L
+            )
+        )
+        val incomeTrend = FinanceAnalyticsEngine.buildTrendChartSeries(singleDayIncome, categorizeByBank = false)
+        assertEquals(2, incomeTrend.dateLabels.size)
+        assertEquals("Start", incomeTrend.dateLabels[0])
+        assertEquals(1, incomeTrend.lines.size)
+        assertEquals("INCOME", incomeTrend.lines[0].key)
+        assertTrue(incomeTrend.hasPlottableSeries)
+
+        val badValues = listOf(
+            FinanceTransaction(
+                id = 11,
+                smsFingerprint = "bad1",
+                bankName = "CBE",
+                bankCode = BankInstitution.CBE.code,
+                type = TransactionType.EXPENSE.name,
+                amount = 0.0,
+                category = "Other",
+                timestamp = 1763020800000L
+            ),
+            FinanceTransaction(
+                id = 12,
+                smsFingerprint = "bad2",
+                bankName = "CBE",
+                bankCode = BankInstitution.CBE.code,
+                type = TransactionType.EXPENSE.name,
+                amount = Double.NaN,
+                category = "Other",
+                timestamp = 1763107200000L
+            )
+        )
+        val zeroTrend = FinanceAnalyticsEngine.buildTrendChartSeries(badValues, categorizeByBank = false)
+        assertFalse(zeroTrend.hasPlottableSeries)
+        assertTrue(FinanceAnalyticsEngine.buildPieSlices(badValues, categorizeByBank = true).isEmpty())
+    }
+
+    @Test
+    fun `chunked Room insertion deduplicates more than 250 unique SMS transactions cleanly`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dao = AppDatabase.getDatabase(context).voiceTaskDao()
+        val repo = VoiceTaskRepository(dao)
+        repo.clearAllFinanceTransactions()
+
+        val longBodyPrefix = "Dear Customer, your Account 1000***99 has been debited with ETB 120.00. Current Balance is ETB 9,000.00. "
+        val hugeBody = longBodyPrefix + "X".repeat(3000)
+        assertNotNull(BankSmsParser.parseSms("CBE", hugeBody))
+
+        val batch = (1..260).map { idx ->
+            FinanceTransaction(
+                smsFingerprint = "bulk_fp_$idx",
+                bankName = "Telebirr",
+                bankCode = BankInstitution.TELEBIRR.code,
+                type = TransactionType.EXPENSE.name,
+                amount = 100.0 + idx,
+                counterparty = "Merchant $idx",
+                timestamp = 1763020800000L + idx * 60_000L
+            )
+        }
+        val inserted = repo.insertFinanceTransactionsDedup(batch + batch.take(15))
+        assertEquals(260, inserted)
+        assertEquals(260, repo.getAllFinanceTransactions().size)
+    }
+
+    @Test
+    fun `finance overview charts and responsive 2x2 plus collapsible filter UI compose without crashing`() {
+        val singleDayIncomeOnly = listOf(
+            FinanceTransaction(
+                id = 1,
+                smsFingerprint = "ui_1",
+                bankName = "Telebirr",
+                bankCode = BankInstitution.TELEBIRR.code,
+                type = TransactionType.INCOME.name,
+                amount = 4500.0,
+                balanceAfter = 14500.0,
+                counterparty = "Client A",
+                category = "Income / Deposit",
+                timestamp = 1763020800000L
+            )
+        )
+
+        composeTestRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                FinanceOverviewComposable(
+                    transactions = singleDayIncomeOnly,
+                    monthlySpendingTotal = 0.0,
+                    monthlyIncomeTotal = 4500.0,
+                    hasSmsPermission = true
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("finance_overview_chart_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_chart_mode_pie").performClick()
+        composeTestRule.onNodeWithTag("finance_chart_group_bank").performClick()
+        composeTestRule.onNodeWithTag("finance_chart_mode_trend").performClick()
+    }
+
+    @Test
+    fun `finance hero 2x2 actions and collapsible filter panel toggle cleanly`() {
+        val filterState = FinanceFilterState()
+        composeTestRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    FinanceHeroSummaryCard(
+                        summary = FinanceSummary(
+                            transactionCount = 2,
+                            totalIncome = 5000.0,
+                            totalOutflow = 1200.0,
+                            netFlow = 3800.0
+                        ),
+                        filterState = filterState,
+                        isScanning = false,
+                        hasAnyData = true,
+                        onScanSmsClick = {},
+                        onPasteSmsClick = {},
+                        onImportFileClick = {},
+                        onManualAddClick = {},
+                        onResetFilters = {},
+                        onClearAllClick = {}
+                    )
+                    FinanceFilterPanel(
+                        filterState = filterState,
+                        onSelectPeriod = {},
+                        onOpenTimeWindow = {},
+                        onSelectBank = {},
+                        onSelectType = {},
+                        onSearchChange = {}
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("finance_scan_sms_btn").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_paste_sms_btn").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_import_file_btn").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_add_manual_btn").assertIsDisplayed()
+
+        // Collapsed by default
+        composeTestRule.onNodeWithText("BANK / WALLET").assertDoesNotExist()
+        // Expand filters
+        composeTestRule.onNodeWithTag("finance_toggle_filters_btn")
+            .performScrollTo()
+            .performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("BANK / WALLET")
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 }

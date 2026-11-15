@@ -6,7 +6,9 @@ import android.content.pm.PackageManager
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 
 data class SmsScanResult(
     val totalMessagesScanned: Int,
@@ -27,7 +29,7 @@ object SmsInboxReader {
     suspend fun scanInbox(
         context: Context,
         sinceTimestampMs: Long? = null,
-        maxMessagesToInspect: Int = 2000
+        maxMessagesToInspect: Int = 1500
     ): SmsScanResult = withContext(Dispatchers.IO) {
         if (!hasReadSmsPermission(context)) {
             return@withContext SmsScanResult(
@@ -38,7 +40,7 @@ object SmsInboxReader {
             )
         }
 
-        val parsed = mutableListOf<FinanceTransaction>()
+        val parsed = LinkedHashMap<String, FinanceTransaction>()
         var scannedCount = 0
 
         try {
@@ -63,9 +65,13 @@ object SmsInboxReader {
                 val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
 
                 while (cursor.moveToNext() && scannedCount < maxMessagesToInspect) {
+                    if (scannedCount % 64 == 0) {
+                        coroutineContext.ensureActive()
+                    }
                     scannedCount++
                     val sender = if (addressIdx >= 0) cursor.getString(addressIdx).orEmpty() else ""
                     val body = if (bodyIdx >= 0) cursor.getString(bodyIdx).orEmpty() else ""
+                    if (body.length < 12) continue
                     val dateMs = if (dateIdx >= 0) cursor.getLong(dateIdx) else System.currentTimeMillis()
 
                     val tx = BankSmsParser.parseSms(
@@ -75,14 +81,14 @@ object SmsInboxReader {
                         source = "SMS_INBOX"
                     )
                     if (tx != null) {
-                        parsed.add(tx)
+                        parsed.putIfAbsent(tx.smsFingerprint, tx)
                     }
                 }
             }
 
             SmsScanResult(
                 totalMessagesScanned = scannedCount,
-                parsedTransactions = parsed,
+                parsedTransactions = parsed.values.toList(),
                 permissionGranted = true
             )
         } catch (se: SecurityException) {
@@ -92,10 +98,12 @@ object SmsInboxReader {
                 permissionGranted = false,
                 errorMessage = "SMS permission was denied by the system."
             )
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (e: Exception) {
             SmsScanResult(
                 totalMessagesScanned = scannedCount,
-                parsedTransactions = parsed,
+                parsedTransactions = parsed.values.toList(),
                 permissionGranted = true,
                 errorMessage = e.localizedMessage ?: "Failed to read SMS inbox."
             )
