@@ -6,3 +6,9 @@ plugins {
   alias(libs.plugins.roborazzi) apply false
   alias(libs.plugins.secrets) apply false
 }
+
+tasks.register<Copy>("syncBuildOutputs") {
+  dependsOn(":app:assembleDebug")
+  from(layout.projectDirectory.file("app/build/outputs/apk/debug/app-debug.apk"))
+  into(layout.projectDirectory.dir(".build-outputs"))
+}
