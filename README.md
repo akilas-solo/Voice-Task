@@ -22,12 +22,13 @@ View your app in AI Studio: https://ai.studio/apps/1af989eb-4fea-4e2f-98a7-10a77
 
 ## Automated GitHub Builds (CI)
 
-Because Android build output folders are excluded from Git commits, pushing this repository triggers the **Android CI Build & Test** workflow in GitHub Actions:
+Because AI Studio's GitHub exporter skips updating binary APK files inside `.build-outputs`, pushing this repository triggers the **Android CI Build & Test** workflow on GitHub Actions to:
 
-1. Push your changes to GitHub.
-2. Open your repository's **Actions** tab on GitHub.
-3. Open the latest **Android CI Build & Test** run.
-4. Download **`app-debug-apk`** from the **Artifacts** section to install the latest build.
+1. Run `:app:testDebugUnitTest` and `:app:assembleDebug` using JDK 21, Gradle 9.3.1, and Android SDK 36.
+2. Automatically commit the refreshed `app-debug.apk` directly into `.build-outputs/` (using `[skip ci]`) so the repository folder stays up to date.
+3. Attach the latest `app-debug.apk` to the **`latest`** entry under **Releases** and to **Actions -> Artifacts (`app-debug-apk`)**.
+
+> **One-time GitHub repo check:** In your GitHub repository under **Settings -> Actions -> General -> Workflow permissions**, ensure **Read and write permissions** is selected so Actions can update `.build-outputs/app-debug.apk` and publish the Release APK.
 
 ## Latest Build Highlights (`v1.1` / `versionCode 2`)
 
