@@ -67,7 +67,7 @@ fun NotepadScreen(
         }
     }
 
-    val folders = listOf("All", "General", "Work", "Personal", "Ideas", "Reminders")
+    val folders by viewModel.notepadFolders.collectAsStateWithLifecycle()
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(

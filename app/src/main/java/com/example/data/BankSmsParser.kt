@@ -176,7 +176,8 @@ object BankSmsParser {
         val txType = detectTransactionType(semanticBody)
         val counterparty = extractCounterparty(semanticBody, txType, institution)
         val referenceId = extractReference(semanticBody).ifBlank { extractReference(cleanBody) }
-        val effectiveTimestamp = extractEmbeddedTimestamp(cleanBody) ?: receivedTimestampMs
+        val embeddedTs = extractEmbeddedTimestamp(cleanBody)
+        val effectiveTimestamp = embeddedTs ?: receivedTimestampMs
         val category = classifyCategory(semanticBody, txType, counterparty)
 
         val displayBankName = if (institution == BankInstitution.OTHER) {
@@ -185,7 +186,10 @@ object BankSmsParser {
             institution.displayName
         }
 
-        val fingerprint = computeFingerprint(cleanSender, cleanBody, effectiveTimestamp)
+        val isManualWithoutDate = embeddedTs == null && (source == "MANUAL_PASTE" || source == "SHARE_INTENT")
+        val fingerprintSender = if (isManualWithoutDate) "" else cleanSender
+        val fingerprintTs = if (isManualWithoutDate) 0L else effectiveTimestamp
+        val fingerprint = computeFingerprint(fingerprintSender, cleanBody, fingerprintTs)
 
         return FinanceTransaction(
             smsFingerprint = fingerprint,

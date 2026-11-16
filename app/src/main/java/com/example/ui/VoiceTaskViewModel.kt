@@ -42,6 +42,7 @@ import com.example.data.NotepadNote
 import com.example.data.NotionDatabaseInfo
 import com.example.data.ParsedFinanceQuery
 import com.example.data.SmsInboxReader
+import com.example.data.StorageAndBackupCoordinator
 import com.example.data.TaskPriority
 import com.example.data.TaskSortOption
 import com.example.data.TelegramActivityLog
@@ -113,29 +114,25 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     // Dynamic storage size indicators
+    var permanentAudioBytes by mutableStateOf(0L)
+        private set
     var totalCacheBytes by mutableStateOf(0L)
         private set
-        
+    var voiceFileCount by mutableStateOf(0)
+        private set
+
     fun refreshCacheStats() {
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>()
-                val totalSize = withContext(Dispatchers.IO) {
-                    var sum = 0L
-                    val dirs = listOf(
-                        File(context.cacheDir, "recordings"),
-                        File(context.cacheDir, "notepad_recordings")
-                    )
-                    dirs.forEach { dir ->
-                        if (dir.exists() && dir.isDirectory) {
-                            dir.listFiles()?.forEach { file ->
-                                if (file.isFile) sum += file.length()
-                            }
-                        }
-                    }
-                    sum
+                val stats = withContext(Dispatchers.IO) {
+                    val tasks = repository.getAllTasks()
+                    val notes = repository.getAllNotepadNotes()
+                    StorageAndBackupCoordinator.computeStorageStats(context, tasks, notes)
                 }
-                totalCacheBytes = totalSize
+                permanentAudioBytes = stats.permanentAudioBytes
+                totalCacheBytes = stats.reclaimableCacheBytes
+                voiceFileCount = stats.voiceFileCount
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -145,43 +142,18 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearAudioCache() {
         viewModelScope.launch {
             try {
-                stopVoiceMemo()
-                stopNotepadVoice()
-                AlarmSoundEngine.stopAll()
                 val context = getApplication<Application>()
+                val protectedRecordingPaths = listOfNotNull(
+                    activeRecordFile?.absolutePath,
+                    notepadActiveRecordFile?.absolutePath
+                ).toSet()
                 withContext(Dispatchers.IO) {
-                    val dirs = listOf(
-                        File(context.cacheDir, "recordings"),
-                        File(context.cacheDir, "notepad_recordings")
+                    StorageAndBackupCoordinator.clearReclaimableCache(
+                        context = context,
+                        repository = repository,
+                        activeRecordingPaths = protectedRecordingPaths
                     )
-                    dirs.forEach { dir ->
-                        if (dir.exists() && dir.isDirectory) {
-                            dir.listFiles()?.forEach { file ->
-                                if (file.isFile &&
-                                    file.absolutePath != activeRecordFile?.absolutePath &&
-                                    file.absolutePath != notepadActiveRecordFile?.absolutePath
-                                ) {
-                                    file.delete()
-                                }
-                            }
-                        }
-                    }
                 }
-                
-                // Clear audio references in Room for both tasks and notepad notes
-                val tasks = repository.getAllTasks()
-                for (task in tasks) {
-                    if (task.audioPath != null || task.audioDurationMs != 0L) {
-                        repository.updateTask(task.copy(audioPath = null, audioDurationMs = 0L))
-                    }
-                }
-                val notes = repository.getAllNotepadNotes()
-                for (note in notes) {
-                    if (note.audioPath != null || note.audioDurationMs != 0L) {
-                        repository.updateNotepadNote(note.copy(audioPath = null, audioDurationMs = 0L))
-                    }
-                }
-                
                 refreshCacheStats()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -200,7 +172,12 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                 autoPlayAfterRecording = prefs.autoPlayAfterRecording
             }
         }
-        refreshCacheStats()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                StorageAndBackupCoordinator.migrateLegacyCacheAudio(application, repository)
+            }
+            refreshCacheStats()
+        }
         upgradeStoredFinanceTransactionsIfNeeded()
     }
 
@@ -257,15 +234,44 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         initialValue = emptyList()
     )
 
-    // Dynamic categories backed by database categories + default folders
-    val categories = repository.categoriesFlow.map { dbCategories ->
+    // Custom folders persisted in DataStore
+    val customFolders: StateFlow<List<String>> = aiConnectorPrefs.customFoldersFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    // Dynamic categories backed by database categories + custom folders + default folders
+    val categories = combine(
+        repository.categoriesFlow,
+        aiConnectorPrefs.customFoldersFlow
+    ) { dbCategories, savedCustom ->
         val defaults = listOf("Inbox", "Work", "Personal", "Ideas", "Quick Memo")
-        (defaults + dbCategories).distinct().filter { it.isNotBlank() }
+        (defaults + savedCustom + dbCategories).distinct().filter { it.isNotBlank() }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = listOf("Inbox", "Work", "Personal", "Ideas", "Quick Memo")
     )
+
+    fun createCustomFolder(name: String) {
+        val clean = name.trim()
+        if (clean.isBlank()) return
+        viewModelScope.launch {
+            aiConnectorPrefs.addCustomFolder(clean)
+        }
+    }
+
+    fun deleteCustomFolder(name: String) {
+        val clean = name.trim()
+        if (clean.isBlank()) return
+        viewModelScope.launch {
+            aiConnectorPrefs.deleteCustomFolder(clean)
+            if (_selectedCategory.value.equals(clean, ignoreCase = true)) {
+                _selectedCategory.value = "All"
+            }
+        }
+    }
 
     // Filtered & Sorted Tasks list (joins search query, selected category, and sort preference)
     val filteredTasks: StateFlow<List<VoiceTask>> = combine(
@@ -843,6 +849,19 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         initialValue = emptyList()
     )
 
+    val notepadFolders: StateFlow<List<String>> = combine(
+        allNotepadNotes,
+        aiConnectorPrefs.customFoldersFlow
+    ) { notes, savedCustom ->
+        val defaults = listOf("All", "General", "Work", "Personal", "Ideas", "Reminders")
+        val noteCategories = notes.map { it.category }
+        (defaults + savedCustom + noteCategories).distinct().filter { it.isNotBlank() }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = listOf("All", "General", "Work", "Personal", "Ideas", "Reminders")
+    )
+
     fun addNotepadNote(title: String, content: String, category: String = "General", isPinned: Boolean = false, colorHex: String? = null, audioPath: String? = null, audioDurationMs: Long = 0L) {
         viewModelScope.launch {
             try {
@@ -941,7 +960,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         }
         try {
             val context = getApplication<Application>()
-            val audioDir = File(context.cacheDir, "recordings").apply { mkdirs() }
+            val audioDir = StorageAndBackupCoordinator.voiceMemosDir(context)
             val formatExtension = if (audioQuality == "Saver") "3gp" else "mp4"
             val file = File(audioDir, "vois_${System.currentTimeMillis()}.$formatExtension")
             activeRecordFile = file
@@ -1368,8 +1387,9 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     fun performExportBackup(onSuccess: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                val json = repository.exportBackupJson()
-                backupStatusText = "Backup successfully exported! (${allTasks.value.size} records)"
+                val savedFolders = aiConnectorPrefs.getCustomFolders()
+                val json = repository.exportBackupJson(savedFolders)
+                backupStatusText = "Backup exported (${allTasks.value.size} memos, ${allNotepadNotes.value.size} notes, ${allFinanceTransactions.value.size} finance records)"
                 onSuccess(json)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1381,16 +1401,19 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     fun performImportBackup(json: String, onFinished: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
-                val success = repository.importBackupJson(json)
-                if (success) {
+                val res = repository.importBackupDetailed(json)
+                if (res.success) {
+                    if (res.customFolders.isNotEmpty()) {
+                        aiConnectorPrefs.mergeCustomFolders(res.customFolders)
+                    }
                     val importedTasks = repository.getAllTasks()
                     ReminderNotificationHelper.rescheduleAllPendingReminders(getApplication(), importedTasks)
                     refreshCacheStats()
-                    backupStatusText = "Backup successfully imported and merged into Room Storage!"
+                    backupStatusText = "Restored ${res.tasksImported} memo(s), ${res.notesImported} note(s), ${res.financeImported} finance record(s)."
                 } else {
                     backupStatusText = "Import failed. Invalid JSON backup formatting structure."
                 }
-                onFinished(success)
+                onFinished(res.success)
             } catch (e: Exception) {
                 e.printStackTrace()
                 backupStatusText = "Import failed: ${e.localizedMessage}"
@@ -1410,12 +1433,90 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     // --- Feedback form processing ---
     var feedbackSubmitted by mutableStateOf(false)
         private set
+    var isFeedbackSending by mutableStateOf(false)
+        private set
+    var feedbackStatusMessage by mutableStateOf<String?>(null)
+        private set
+
+    fun resetFeedbackState() {
+        feedbackSubmitted = false
+        feedbackStatusMessage = null
+    }
+
     fun sendUserFeedback(category: String, text: String, userEmail: String) {
+        val cleanText = text.trim()
+        if (cleanText.isBlank() || isFeedbackSending) return
         viewModelScope.launch {
-            delay(1200) // Simulated secure upload
-            feedbackSubmitted = true
-            delay(3500)
-            feedbackSubmitted = false
+            isFeedbackSending = true
+            feedbackStatusMessage = null
+            val appCtx = getApplication<Application>()
+            val cfg = aiConnectorPrefs.getConfig()
+            val tgConfig = telegramPrefs.getConfig()
+            val formattedBody = buildString {
+                append("Category: ").append(category).append("\n")
+                if (userEmail.isNotBlank()) {
+                    append("Reply-To: ").append(userEmail.trim()).append("\n")
+                }
+                append("\n").append(cleanText)
+            }
+
+            val dispatchOutcome: Pair<Boolean, String> = when {
+                cfg.isResendConfigured -> {
+                    val recipient = cfg.emailDefaultRecipient.ifBlank { cfg.emailFromAddress }
+                    when (
+                        val res = ExternalConnectorManager.sendViaResendApi(
+                            context = appCtx,
+                            config = cfg,
+                            toEmail = recipient,
+                            subject = "[Voice Task Feedback] $category",
+                            body = formattedBody
+                        )
+                    ) {
+                        is ConnectorResult.Success -> true to "Sent via Resend Email (${res.message})."
+                        is ConnectorResult.Error -> false to res.reason
+                    }
+                }
+                TelegramSyncManager.isBotConfigured() && tgConfig.isVerified -> {
+                    when (
+                        val tgRes = TelegramSyncManager.sendCustomMessage(
+                            context = appCtx,
+                            title = "Feedback: $category",
+                            body = formattedBody
+                        )
+                    ) {
+                        is TelegramResult.Success -> true to "Delivered via Telegram (@${tgConfig.username})."
+                        is TelegramResult.Error -> false to tgRes.reason
+                    }
+                }
+                else -> {
+                    val recipient = cfg.emailDefaultRecipient.ifBlank { "support@akilastech.com" }
+                    when (
+                        val mailRes = ExternalConnectorManager.launchMailComposer(
+                            context = appCtx,
+                            toEmail = recipient,
+                            subject = "[Voice Task Feedback] $category",
+                            body = formattedBody
+                        )
+                    ) {
+                        is ConnectorResult.Success -> {
+                            repository.insertConnectorLog(
+                                ConnectorDispatchLog(
+                                    channel = "EMAIL",
+                                    title = "Feedback: $category",
+                                    detail = "Opened email composer for $recipient",
+                                    status = "DRAFTED"
+                                )
+                            )
+                            true to "Opened your email app with feedback pre-filled."
+                        }
+                        is ConnectorResult.Error -> false to mailRes.reason
+                    }
+                }
+            }
+
+            feedbackStatusMessage = dispatchOutcome.second
+            feedbackSubmitted = dispatchOutcome.first
+            isFeedbackSending = false
         }
     }
 
@@ -2339,40 +2440,52 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    init {
-        // Start helper timer to check for reminders & periodic Telegram two-way sync in active app session
-        viewModelScope.launch {
+    private var foregroundPollingJob: Job? = null
+
+    fun onAppStarted() {
+        if (foregroundPollingJob?.isActive == true) return
+        foregroundPollingJob = viewModelScope.launch {
+            // Reconcile immediately upon returning to foreground
+            reconcileDueRemindersAndSync(syncTelegram = false)
             var tickCount = 0
             while (true) {
-                delay(6000) // Checks every 6 seconds
+                delay(6000)
                 tickCount++
-                try {
-                    val now = System.currentTimeMillis()
-                    val taskWithReminders = allTasks.value.filter { it.reminderTime != null && !it.isCompleted }
-                    val triggered = taskWithReminders.firstOrNull { it.reminderTime!! <= now }
-                    if (triggered != null && activeReminderInApp == null) {
-                        activeReminderInApp = triggered
-                        // Clear reminderTime to avoid repeated firing
-                        repository.updateTask(triggered.copy(reminderTime = null))
+                reconcileDueRemindersAndSync(syncTelegram = tickCount % 3 == 0)
+            }
+        }
+    }
 
-                        val tgConfig = telegramPrefs.getConfig()
-                        val recentlySent = triggered.lastTelegramSentAt != null &&
-                            (now - triggered.lastTelegramSentAt) < 25_000L
-                        if (triggered.notifyTelegram && tgConfig.isVerified && tgConfig.autoSendReminders && !recentlySent) {
-                            launch {
-                                TelegramSyncManager.sendTaskAlert(getApplication(), triggered, isReminder = true)
-                            }
-                        }
-                    }
+    fun onAppStopped() {
+        foregroundPollingJob?.cancel()
+        foregroundPollingJob = null
+    }
 
-                    // Every ~18 seconds while foregrounded & verified, sync two-way Telegram callbacks/commands
-                    if (tickCount % 3 == 0 && telegramConfig.value.isVerified) {
-                        TelegramSyncManager.syncIncomingUpdates(getApplication())
+    private suspend fun reconcileDueRemindersAndSync(syncTelegram: Boolean) {
+        try {
+            val now = System.currentTimeMillis()
+            val dueTasks = repository.getAllTasks()
+                .filter { it.reminderTime != null && !it.isCompleted && it.reminderTime <= now }
+            val triggered = dueTasks.firstOrNull()
+            if (triggered != null && activeReminderInApp == null) {
+                activeReminderInApp = triggered
+                repository.updateTask(triggered.copy(reminderTime = null))
+
+                val tgConfig = telegramPrefs.getConfig()
+                val recentlySent = triggered.lastTelegramSentAt != null &&
+                    (now - triggered.lastTelegramSentAt) < 25_000L
+                if (triggered.notifyTelegram && tgConfig.isVerified && tgConfig.autoSendReminders && !recentlySent) {
+                    viewModelScope.launch {
+                        TelegramSyncManager.sendTaskAlert(getApplication(), triggered, isReminder = true)
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
                 }
             }
+
+            if (syncTelegram && telegramConfig.value.isVerified) {
+                TelegramSyncManager.syncIncomingUpdates(getApplication())
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -2442,7 +2555,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         }
         try {
             val context = getApplication<Application>()
-            val audioDir = File(context.cacheDir, "notepad_recordings").apply { mkdirs() }
+            val audioDir = StorageAndBackupCoordinator.notepadVoicesDir(context)
             val file = File(audioDir, "note_voice_${System.currentTimeMillis()}.mp4")
             notepadActiveRecordFile = file
 
@@ -2677,6 +2790,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     override fun onCleared() {
+        foregroundPollingJob?.cancel()
         verificationPollJob?.cancel()
         AlarmSoundEngine.stopAll()
         stopVoiceMemo()

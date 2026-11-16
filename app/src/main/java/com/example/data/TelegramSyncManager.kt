@@ -411,10 +411,11 @@ object TelegramSyncManager {
             val response = if (audioFile != null && config.includeAudioAttachments) {
                 val ext = audioFile.extension.lowercase(Locale.getDefault())
                 val uploadName = "${note.title.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "note_voice" }.take(32)}.${if (ext == "mp4") "m4a" else ext}"
+                val mime = if (ext == "3gp") "audio/3gpp" else "audio/mp4"
                 val filePart = MultipartBody.Part.createFormData(
                     "audio",
                     uploadName,
-                    audioFile.asRequestBody("audio/mp4".toMediaType())
+                    audioFile.asRequestBody(mime.toMediaType())
                 )
                 val textPlain = "text/plain".toMediaType()
                 val durationSecs = ((note.audioDurationMs / 1000L).coerceAtLeast(1L)).toString()

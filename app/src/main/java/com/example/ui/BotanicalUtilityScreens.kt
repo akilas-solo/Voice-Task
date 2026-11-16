@@ -27,16 +27,31 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.theme.BotanicalAmber
 import com.example.ui.theme.BotanicalSage
 import com.example.ui.theme.FrauncesFontFamily
 import com.example.ui.theme.StudioMonoFontFamily
 import java.util.Locale
 
+private fun formatStorageSize(bytes: Long): String {
+    val kb = bytes / 1024f
+    return if (kb >= 1024f) {
+        String.format(Locale.getDefault(), "%.2f MB", kb / 1024f)
+    } else {
+        String.format(Locale.getDefault(), "%.1f KB", kb)
+    }
+}
+
 @Composable
 fun FoldersManagerScreen(viewModel: VoiceTaskViewModel) {
+    val context = LocalContext.current
     var newFolderText by remember { mutableStateOf("") }
     val categories by viewModel.categories.collectAsStateWithLifecycle()
+    val customFolders by viewModel.customFolders.collectAsStateWithLifecycle()
     val allTasks by viewModel.allTasks.collectAsStateWithLifecycle()
 
     Column(
@@ -61,7 +76,7 @@ fun FoldersManagerScreen(viewModel: VoiceTaskViewModel) {
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Organize memos into curated workspaces.",
+                    text = "Organize memos and notepad notes into curated workspaces.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -83,14 +98,11 @@ fun FoldersManagerScreen(viewModel: VoiceTaskViewModel) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (newFolderText.isNotBlank()) {
-                                viewModel.addTask(
-                                    title = "Folder Initializer Memo",
-                                    notes = "Initializer memo for folder: ${newFolderText.trim()}.",
-                                    category = newFolderText.trim(),
-                                    tags = "Folder"
-                                )
+                            val clean = newFolderText.trim()
+                            if (clean.isNotEmpty()) {
+                                viewModel.createCustomFolder(clean)
                                 newFolderText = ""
+                                Toast.makeText(context, "Folder \"$clean\" created.", Toast.LENGTH_SHORT).show()
                             }
                         },
                         shape = RoundedCornerShape(14.dp),
@@ -117,6 +129,7 @@ fun FoldersManagerScreen(viewModel: VoiceTaskViewModel) {
 
         categories.forEach { folder ->
             val count = allTasks.count { it.category == folder }
+            val isCustom = customFolders.any { it.equals(folder, ignoreCase = true) }
             Surface(
                 onClick = {
                     viewModel.selectCategory(folder)
@@ -136,7 +149,10 @@ fun FoldersManagerScreen(viewModel: VoiceTaskViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Surface(
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
@@ -156,21 +172,46 @@ fun FoldersManagerScreen(viewModel: VoiceTaskViewModel) {
                             text = folder,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = BotanicalSage.copy(alpha = 0.45f)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(
-                            text = "$count memos",
-                            fontFamily = StudioMonoFontFamily,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = BotanicalSage.copy(alpha = 0.45f)
+                        ) {
+                            Text(
+                                text = "$count memos",
+                                fontFamily = StudioMonoFontFamily,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                        if (isCustom) {
+                            IconButton(
+                                onClick = {
+                                    viewModel.deleteCustomFolder(folder)
+                                    Toast.makeText(context, "Removed custom folder \"$folder\".", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("delete_folder_$folder")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = "Delete custom folder",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -185,10 +226,25 @@ fun SettingsScreen(
     onOpenAiStudio: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val allTasks by viewModel.allTasks.collectAsStateWithLifecycle()
     val telegramLogs by viewModel.telegramLogs.collectAsStateWithLifecycle()
     var showTelegramActivityDialog by remember { mutableStateOf(false) }
     val selectedTab = viewModel.selectedSettingsTab
+    var canScheduleExactAlarms by remember {
+        mutableStateOf(ReminderNotificationHelper.canScheduleExactAlarms(context))
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                canScheduleExactAlarms = ReminderNotificationHelper.canScheduleExactAlarms(context)
+                viewModel.refreshCacheStats()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     if (showTelegramActivityDialog) {
         TelegramActivitySheet(
@@ -206,6 +262,7 @@ fun SettingsScreen(
 
     LaunchedEffect(Unit) {
         viewModel.refreshCacheStats()
+        canScheduleExactAlarms = ReminderNotificationHelper.canScheduleExactAlarms(context)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -436,6 +493,72 @@ fun SettingsScreen(
                         }
                     }
 
+                    if (!canScheduleExactAlarms) {
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = BotanicalAmber.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, BotanicalAmber.copy(alpha = 0.45f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("settings_exact_alarm_card")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Alarm,
+                                        contentDescription = null,
+                                        tint = BotanicalAmber,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = "Exact Alarm Permission Off",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "Allow exact alarms in Android settings so reminder tones ring on time.",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        runCatching {
+                                            context.startActivity(
+                                                ReminderNotificationHelper.createExactAlarmSettingsIntent(context)
+                                            )
+                                        }.onFailure {
+                                            Toast.makeText(
+                                                context,
+                                                "Unable to open exact alarm settings.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier.testTag("settings_exact_alarm_allow_btn")
+                                ) {
+                                    Text("Allow", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+
                     // Storage Details
                     Surface(
                         shape = RoundedCornerShape(20.dp),
@@ -461,29 +584,44 @@ fun SettingsScreen(
                                 Text("${allTasks.size} entries", fontFamily = StudioMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             }
                             Spacer(modifier = Modifier.height(6.dp))
-                            val memoCount = allTasks.count { it.audioPath != null }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Voice Memo Files", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("$memoCount files", fontFamily = StudioMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("Saved Voice Clips", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = "${viewModel.voiceFileCount} files · ${formatStorageSize(viewModel.permanentAudioBytes)}",
+                                    fontFamily = StudioMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
-                            val kbSize = viewModel.totalCacheBytes / 1024f
-                            val formattedSize = if (kbSize > 1024f) {
-                                String.format(Locale.getDefault(), "%.2f MB", kbSize / 1024f)
-                            } else {
-                                String.format(Locale.getDefault(), "%.1f KB", kbSize)
-                            }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Cache Size", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(formattedSize, fontFamily = StudioMonoFontFamily, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp)
+                                Text("Temp Audio Cache", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = formatStorageSize(viewModel.totalCacheBytes),
+                                    fontFamily = StudioMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 13.sp
+                                )
                             }
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Saved voice recordings are stored in permanent app storage and kept intact when clearing temporary cache.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
 
                             OutlinedButton(
                                 onClick = {
                                     viewModel.clearAudioCache()
-                                    Toast.makeText(context, "Audio cache cleared successfully!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(
+                                        context,
+                                        "Temporary audio cache cleared — saved voice clips kept safe.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 },
                                 shape = RoundedCornerShape(14.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -491,10 +629,11 @@ fun SettingsScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = 48.dp)
+                                    .testTag("clear_temp_cache_btn")
                             ) {
                                 Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Clear Cached Audio Files")
+                                Text("Clear Temp Audio Cache")
                             }
                         }
                     }
@@ -677,7 +816,7 @@ fun BackupRestoreScreen(viewModel: VoiceTaskViewModel) {
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Generate a single portable JSON string of all local memos, folders, and notes.",
+                    text = "Generate a single portable v2 JSON archive of all tasks, custom folders, notepad notes, and finance ledger.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -756,6 +895,8 @@ fun FeedbackScreen(viewModel: VoiceTaskViewModel) {
     var showCategoryMenu by remember { mutableStateOf(false) }
 
     val submitted = viewModel.feedbackSubmitted
+    val isSending = viewModel.isFeedbackSending
+    val statusMessage = viewModel.feedbackStatusMessage
 
     Column(
         modifier = Modifier
@@ -764,7 +905,7 @@ fun FeedbackScreen(viewModel: VoiceTaskViewModel) {
             .verticalScroll(rememberScrollState())
     ) {
         Text(
-            text = "Report bugs, suggest workflow improvements, or share feedback on the Nordic Botanical workspace.",
+            text = "Report bugs, suggest workflow improvements, or share feedback via Email or Telegram.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -789,20 +930,47 @@ fun FeedbackScreen(viewModel: VoiceTaskViewModel) {
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Feedback Submitted",
+                        text = "Feedback Dispatched",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Thank you for helping refine Voice Task.",
+                        text = statusMessage ?: "Thank you for helping refine Voice Task.",
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedButton(
+                        onClick = {
+                            feedbackContent = ""
+                            viewModel.resetFeedbackState()
+                        },
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("Send Another")
+                    }
                 }
             }
         } else {
+            if (!statusMessage.isNullOrBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = statusMessage,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -871,12 +1039,23 @@ fun FeedbackScreen(viewModel: VoiceTaskViewModel) {
                                 viewModel.sendUserFeedback(categorySelection, feedbackContent, email)
                             }
                         },
+                        enabled = feedbackContent.isNotBlank() && !isSending,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
                     ) {
-                        Text("Send Feedback")
+                        if (isSending) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Sending...")
+                        } else {
+                            Text("Send Feedback")
+                        }
                     }
                 }
             }

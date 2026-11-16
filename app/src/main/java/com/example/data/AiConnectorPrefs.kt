@@ -152,6 +152,7 @@ class AiConnectorPrefs(private val context: Context) {
         val STUDIO_QUALITY = stringPreferencesKey("studio_audio_quality")
         val STUDIO_VIBRATION = booleanPreferencesKey("studio_enable_vibration")
         val STUDIO_AUTO_PLAY = booleanPreferencesKey("studio_auto_play_after_rec")
+        val CUSTOM_FOLDERS_JSON = stringPreferencesKey("workspace_custom_folders_json")
     }
 
     val configFlow: Flow<AiStudioConfig> = context.aiConnectorDataStore.data.map { prefs ->
@@ -231,6 +232,46 @@ class AiConnectorPrefs(private val context: Context) {
     suspend fun saveAutoPlayEnabled(enabled: Boolean) {
         context.aiConnectorDataStore.edit { prefs ->
             prefs[Keys.STUDIO_AUTO_PLAY] = enabled
+        }
+    }
+
+    val customFoldersFlow: Flow<List<String>> = context.aiConnectorDataStore.data.map { prefs ->
+        decodeStringList(prefs[Keys.CUSTOM_FOLDERS_JSON])
+    }
+
+    suspend fun getCustomFolders(): List<String> = customFoldersFlow.first()
+
+    suspend fun addCustomFolder(rawName: String) {
+        val clean = rawName.trim()
+        if (clean.isBlank()) return
+        context.aiConnectorDataStore.edit { prefs ->
+            val current = decodeStringList(prefs[Keys.CUSTOM_FOLDERS_JSON])
+            if (current.none { it.equals(clean, ignoreCase = true) }) {
+                prefs[Keys.CUSTOM_FOLDERS_JSON] = encodeStringList(current + clean)
+            }
+        }
+    }
+
+    suspend fun deleteCustomFolder(name: String) {
+        val clean = name.trim()
+        context.aiConnectorDataStore.edit { prefs ->
+            val updated = decodeStringList(prefs[Keys.CUSTOM_FOLDERS_JSON])
+                .filterNot { it.equals(clean, ignoreCase = true) }
+            prefs[Keys.CUSTOM_FOLDERS_JSON] = encodeStringList(updated)
+        }
+    }
+
+    suspend fun mergeCustomFolders(names: List<String>) {
+        val cleaned = names.map { it.trim() }.filter { it.isNotBlank() }
+        if (cleaned.isEmpty()) return
+        context.aiConnectorDataStore.edit { prefs ->
+            val current = decodeStringList(prefs[Keys.CUSTOM_FOLDERS_JSON]).toMutableList()
+            cleaned.forEach { candidate ->
+                if (current.none { it.equals(candidate, ignoreCase = true) }) {
+                    current.add(candidate)
+                }
+            }
+            prefs[Keys.CUSTOM_FOLDERS_JSON] = encodeStringList(current)
         }
     }
 
@@ -354,6 +395,22 @@ class AiConnectorPrefs(private val context: Context) {
                     isEnabled = obj.optBoolean("isEnabled", true)
                 )
             }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun encodeStringList(items: List<String>): String {
+        val arr = JSONArray()
+        items.distinct().forEach { arr.put(it) }
+        return arr.toString()
+    }
+
+    private fun decodeStringList(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length())
+                .mapNotNull { arr.optString(it)?.trim()?.takeIf(String::isNotBlank) }
+                .distinct()
         }.getOrDefault(emptyList())
     }
 }

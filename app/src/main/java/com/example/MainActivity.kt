@@ -174,13 +174,17 @@ fun MainLayout(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.onAppForegrounded()
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.onAppStarted()
+                Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
+                Lifecycle.Event.ON_STOP -> viewModel.onAppStopped()
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.onAppStopped()
         }
     }
 
@@ -318,16 +322,34 @@ fun MainLayout(
         }
     }
 
-    // Back navigation handler for custom screen switching
-    val isUtilityScreen = currentScreen == VoiceTaskViewModel.Screen.BACKUP_RESTORE ||
+    // Back navigation handler for overlays, settings sub-tabs, and screen switching
+    val isUtilityScreen = currentScreen == VoiceTaskViewModel.Screen.FOLDERS ||
+        currentScreen == VoiceTaskViewModel.Screen.BACKUP_RESTORE ||
         currentScreen == VoiceTaskViewModel.Screen.USER_GUIDE ||
         currentScreen == VoiceTaskViewModel.Screen.FEEDBACK
 
-    BackHandler(enabled = currentScreen != VoiceTaskViewModel.Screen.MEMOS) {
-        if (isUtilityScreen) {
-            viewModel.navigateTo(VoiceTaskViewModel.Screen.SETTINGS)
-        } else {
-            viewModel.navigateTo(VoiceTaskViewModel.Screen.MEMOS)
+    val hasAnyOverlayOpen = showRecordSheet ||
+        showQuickAddDialog ||
+        showAiStudioSheet ||
+        showFinanceAiSheet
+
+    val canNavigateBack = hasAnyOverlayOpen ||
+        (currentScreen == VoiceTaskViewModel.Screen.SETTINGS &&
+            viewModel.selectedSettingsTab != VoiceTaskViewModel.SettingsTab.STUDIO) ||
+        currentScreen != VoiceTaskViewModel.Screen.MEMOS
+
+    BackHandler(enabled = canNavigateBack) {
+        when {
+            showRecordSheet -> showRecordSheet = false
+            showQuickAddDialog -> showQuickAddDialog = false
+            showAiStudioSheet -> showAiStudioSheet = false
+            showFinanceAiSheet -> showFinanceAiSheet = false
+            currentScreen == VoiceTaskViewModel.Screen.SETTINGS &&
+                viewModel.selectedSettingsTab != VoiceTaskViewModel.SettingsTab.STUDIO -> {
+                viewModel.selectSettingsTab(VoiceTaskViewModel.SettingsTab.STUDIO)
+            }
+            isUtilityScreen -> viewModel.navigateTo(VoiceTaskViewModel.Screen.SETTINGS)
+            else -> viewModel.navigateTo(VoiceTaskViewModel.Screen.MEMOS)
         }
     }
 

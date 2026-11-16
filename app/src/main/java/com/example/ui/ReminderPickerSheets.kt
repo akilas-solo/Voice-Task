@@ -33,6 +33,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.ui.theme.BotanicalAmber
 import com.example.ui.theme.BotanicalSage
 import com.example.ui.theme.FrauncesFontFamily
@@ -225,6 +228,20 @@ fun ReminderScheduleDialog(
         )
     }
     val isCandidateValid = ReminderDateTimeHelper.isFutureReminder(candidateTimestamp)
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var canScheduleExact by remember {
+        mutableStateOf(ReminderNotificationHelper.canScheduleExactAlarms(context))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                canScheduleExact = ReminderNotificationHelper.canScheduleExactAlarms(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val todayStartUtcMillis = remember {
         ReminderDateTimeHelper.extractLocalDateAsUtcMidnight(System.currentTimeMillis())
@@ -629,6 +646,62 @@ fun ReminderScheduleDialog(
                             checked = notifyTelegram,
                             onCheckedChange = onNotifyTelegramChanged
                         )
+                    }
+                }
+
+                if (!canScheduleExact) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = BotanicalAmber.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, BotanicalAmber.copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("exact_alarm_permission_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Alarm,
+                                    contentDescription = null,
+                                    tint = BotanicalAmber,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Exact alarm permission is off; alarms may be delayed by Android.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            TextButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            ReminderNotificationHelper.createExactAlarmSettingsIntent(context)
+                                        )
+                                    }.onFailure {
+                                        Toast.makeText(
+                                            context,
+                                            "Unable to open exact alarm settings.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                },
+                                modifier = Modifier.testTag("exact_alarm_allow_btn")
+                            ) {
+                                Text("Allow", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
 

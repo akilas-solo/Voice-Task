@@ -257,7 +257,8 @@ fun BotanicalTopHeader(
 ) {
     var showMoreMenu by remember { mutableStateOf(false) }
 
-    val isUtilityScreen = currentScreen == VoiceTaskViewModel.Screen.BACKUP_RESTORE ||
+    val isUtilityScreen = currentScreen == VoiceTaskViewModel.Screen.FOLDERS ||
+        currentScreen == VoiceTaskViewModel.Screen.BACKUP_RESTORE ||
         currentScreen == VoiceTaskViewModel.Screen.USER_GUIDE ||
         currentScreen == VoiceTaskViewModel.Screen.FEEDBACK
 
@@ -533,6 +534,7 @@ fun BotanicalBottomNavBar(
                 label = "Settings",
                 icon = Icons.Default.Tune,
                 selected = currentScreen == VoiceTaskViewModel.Screen.SETTINGS ||
+                    currentScreen == VoiceTaskViewModel.Screen.FOLDERS ||
                     currentScreen == VoiceTaskViewModel.Screen.BACKUP_RESTORE ||
                     currentScreen == VoiceTaskViewModel.Screen.USER_GUIDE ||
                     currentScreen == VoiceTaskViewModel.Screen.FEEDBACK,

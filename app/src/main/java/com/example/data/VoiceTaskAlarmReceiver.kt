@@ -1,15 +1,10 @@
 package com.example.data
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
-import android.media.RingtoneManager
-import android.net.Uri
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.ui.AlarmSoundCatalog
@@ -69,37 +64,10 @@ class VoiceTaskAlarmReceiver : BroadcastReceiver() {
     }
 
     private fun showRealDeviceNotification(context: Context, task: VoiceTask) {
-        val channelId = "voistask_alarm_channel_v2"
+        val channelId = ReminderNotificationHelper.ensureAlarmNotificationChannel(context, task.alertSound)
         val notificationId = task.id
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        val customRingtoneUri = AlarmSoundCatalog.extractRingtoneUri(task.alertSound)
-            ?.let { runCatching { Uri.parse(it) }.getOrNull() }
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Voice Task Alarms",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Scheduled alarm reminders and chime notifications"
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0L, 280L, 220L, 280L, 600L)
-                if (customRingtoneUri != null) {
-                    setSound(
-                        customRingtoneUri,
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build()
-                    )
-                }
-            }
-            notificationManager.createNotificationChannel(channel)
-        }
 
         val openIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP

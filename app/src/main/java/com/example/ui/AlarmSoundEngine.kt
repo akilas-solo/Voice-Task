@@ -22,9 +22,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.example.data.StorageAndBackupCoordinator
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -736,6 +739,67 @@ object AlarmSoundEngine {
             offset += noteSamples + gapSamples
         }
         return buffer
+    }
+
+    internal fun encodePcmToWavBytes(pcm: ShortArray, sampleRate: Int = SAMPLE_RATE): ByteArray {
+        val dataSize = pcm.size * 2
+        val byteRate = sampleRate * 2 // mono 16-bit
+        val totalChunkSize = 36 + dataSize
+        val out = ByteArrayOutputStream(44 + dataSize)
+
+        fun writeAscii(s: String) {
+            s.forEach { out.write(it.code) }
+        }
+        fun writeIntLE(v: Int) {
+            out.write(v and 0xFF)
+            out.write((v shr 8) and 0xFF)
+            out.write((v shr 16) and 0xFF)
+            out.write((v shr 24) and 0xFF)
+        }
+        fun writeShortLE(v: Int) {
+            out.write(v and 0xFF)
+            out.write((v shr 8) and 0xFF)
+        }
+
+        writeAscii("RIFF")
+        writeIntLE(totalChunkSize)
+        writeAscii("WAVE")
+        writeAscii("fmt ")
+        writeIntLE(16) // PCM subchunk size
+        writeShortLE(1) // PCM format
+        writeShortLE(1) // Mono
+        writeIntLE(sampleRate)
+        writeIntLE(byteRate)
+        writeShortLE(2) // Block align
+        writeShortLE(16) // Bits per sample
+        writeAscii("data")
+        writeIntLE(dataSize)
+        for (sample in pcm) {
+            val s = sample.toInt()
+            out.write(s and 0xFF)
+            out.write((s shr 8) and 0xFF)
+        }
+        return out.toByteArray()
+    }
+
+    fun synthesizeChimeWavFile(context: Context, preset: AlarmSoundPreset): File? {
+        return runCatching {
+            val dir = StorageAndBackupCoordinator.alarmTonesCacheDir(context.applicationContext)
+            val slug = preset.id
+                .lowercase(Locale.ROOT)
+                .replace(Regex("[^a-z0-9]+"), "_")
+                .trim('_')
+                .ifBlank { "chime" }
+            val wavFile = File(dir, "$slug.wav")
+            if (wavFile.exists() && wavFile.length() > 44L) {
+                return@runCatching wavFile
+            }
+            val pcm = synthesizeChimePcm(preset.notes)
+            if (pcm.isEmpty()) return@runCatching null
+            val bytes = encodePcmToWavBytes(pcm)
+            wavFile.writeBytes(bytes)
+            wavFile
+        }.getOrNull()
     }
 
     private var activeVibrator: Vibrator? = null
