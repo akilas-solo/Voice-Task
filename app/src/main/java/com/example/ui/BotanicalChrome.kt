@@ -88,7 +88,7 @@ fun AppPasscodeLockScreen(
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = "Voice Task",
+                text = "Finance & Task",
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground
             )
@@ -241,6 +241,18 @@ fun AppPasscodeLockScreen(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            Text(
+                text = "Powered by AKILAS TECH",
+                fontFamily = StudioMonoFontFamily,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.8.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
@@ -263,14 +275,14 @@ fun BotanicalTopHeader(
         currentScreen == VoiceTaskViewModel.Screen.FEEDBACK
 
     val (title, subtitle) = when (currentScreen) {
-        VoiceTaskViewModel.Screen.MEMOS -> "Voice Task" to "Audio & Action Studio"
+        VoiceTaskViewModel.Screen.MEMOS -> "Finance & Task" to "Powered by AKILAS TECH"
         VoiceTaskViewModel.Screen.NOTEPAD -> "Notepad" to "Notes & Voice Clips"
         VoiceTaskViewModel.Screen.FINANCE -> "Finance" to "SMS Ledger & AI Insights"
         VoiceTaskViewModel.Screen.FOLDERS -> "Folders" to "Curated Workspaces"
         VoiceTaskViewModel.Screen.SETTINGS -> "Settings" to "Studio, AI & Connectors"
         VoiceTaskViewModel.Screen.BACKUP_RESTORE -> "Backup & Restore" to "Local JSON Archive"
         VoiceTaskViewModel.Screen.USER_GUIDE -> "User Guide" to "Workflow Reference"
-        VoiceTaskViewModel.Screen.FEEDBACK -> "Feedback" to "Share Notes with Akilas Tech"
+        VoiceTaskViewModel.Screen.FEEDBACK -> "Feedback" to "Share Notes with AKILAS TECH"
     }
 
     Surface(
@@ -313,7 +325,7 @@ fun BotanicalTopHeader(
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Default.Mic,
-                                    contentDescription = "Voice Task",
+                                    contentDescription = "Finance & Task",
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(19.dp)
                                 )

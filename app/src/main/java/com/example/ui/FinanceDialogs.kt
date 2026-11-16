@@ -14,6 +14,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -32,12 +33,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.BankInstitution
 import com.example.data.BankSmsParser
+import com.example.data.ExpenseCategorySuggester
 import com.example.data.FinanceAnalyticsEngine
 import com.example.data.FinanceFilterState
 import com.example.data.FinancePeriodMode
 import com.example.data.FinanceTransaction
 import com.example.data.TimeOfDayPreset
 import com.example.data.TransactionType
+import com.example.ui.theme.BotanicalSage
 import com.example.ui.theme.FrauncesFontFamily
 import com.example.ui.theme.StudioMonoFontFamily
 import com.example.ui.theme.StudioSuccess
@@ -290,17 +293,36 @@ internal fun FinanceTimeWindowDialog(
 
 @Composable
 internal fun PasteBankSmsDialog(
+    learnedCategoryRules: Map<String, String> = emptyMap(),
     onDismiss: () -> Unit,
-    onImport: (String, String) -> Unit
+    onImport: (String, String, String?) -> Unit
 ) {
     var senderHint by remember { mutableStateOf("Telebirr / CBE / Bank") }
     var rawSms by remember { mutableStateOf("") }
+    var selectedCategoryOverride by remember { mutableStateOf<String?>(null) }
+
+    val liveSuggestion = remember(rawSms, senderHint, learnedCategoryRules) {
+        BankSmsParser.suggestCategoryForSms(
+            rawBody = rawSms,
+            senderHint = senderHint,
+            learnedCategoryRules = learnedCategoryRules
+        )
+    }
+
+    LaunchedEffect(rawSms) {
+        if (rawSms.isBlank()) {
+            selectedCategoryOverride = null
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Paste Bank SMS", fontFamily = FrauncesFontFamily) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text(
                     text = "Paste one or multiple Telebirr, CBE, Bank of Abyssinia, Awash, Dashen, or other bank SMS alerts (separated by a blank line).",
                     fontSize = 12.sp,
@@ -318,18 +340,80 @@ internal fun PasteBankSmsDialog(
                     value = rawSms,
                     onValueChange = { rawSms = it },
                     label = { Text("Paste SMS message text here") },
-                    minLines = 4,
-                    maxLines = 8,
+                    minLines = 3,
+                    maxLines = 5,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("paste_sms_body_input")
                 )
+
+                if (liveSuggestion != null) {
+                    val activeCategory = selectedCategoryOverride ?: liveSuggestion.category
+                    val quickChoices = remember(liveSuggestion) {
+                        (listOf(liveSuggestion.category) + liveSuggestion.alternatives + "Other")
+                            .distinct()
+                            .take(4)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = BotanicalSage.copy(alpha = 0.22f),
+                        border = BorderStroke(1.dp, BotanicalSage),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("paste_sms_category_suggestion_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "Suggested: $activeCategory",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = liveSuggestion.reason,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                quickChoices.forEach { choice ->
+                                    BotanicalFilterChip(
+                                        label = choice,
+                                        selected = activeCategory == choice,
+                                        onClick = {
+                                            selectedCategoryOverride = if (choice == liveSuggestion.category) null else choice
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onImport(rawSms, senderHint) },
+                onClick = { onImport(rawSms, senderHint, selectedCategoryOverride) },
                 enabled = rawSms.isNotBlank(),
                 modifier = Modifier.testTag("confirm_paste_sms_btn")
             ) {
@@ -352,7 +436,24 @@ internal fun AddManualTransactionDialog(
     var amountText by remember { mutableStateOf("") }
     var counterparty by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Transfers") }
+    var hasManualCategoryPick by remember { mutableStateOf(false) }
     var notes by remember { mutableStateOf("") }
+
+    LaunchedEffect(counterparty, notes, selectedType) {
+        if (!hasManualCategoryPick) {
+            val combined = "$counterparty $notes".trim()
+            if (combined.length >= 3) {
+                val suggestion = ExpenseCategorySuggester.suggestCategory(
+                    semanticBody = combined,
+                    counterparty = counterparty,
+                    type = selectedType
+                )
+                if (suggestion.matchedKeyword != null) {
+                    category = suggestion.category
+                }
+            }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -417,7 +518,10 @@ internal fun AddManualTransactionDialog(
                         BotanicalFilterChip(
                             label = c,
                             selected = category == c,
-                            onClick = { category = c }
+                            onClick = {
+                                category = c
+                                hasManualCategoryPick = true
+                            }
                         )
                     }
                 }
@@ -448,6 +552,7 @@ internal fun AddManualTransactionDialog(
 @Composable
 internal fun TransactionDetailDialog(
     tx: FinanceTransaction,
+    learnedCategoryRules: Map<String, String> = emptyMap(),
     onDismiss: () -> Unit,
     onUpdateCategory: (String) -> Unit,
     onUpdateType: (TransactionType) -> Unit,
@@ -456,6 +561,9 @@ internal fun TransactionDetailDialog(
 ) {
     val context = LocalContext.current
     val dateFmt = remember { SimpleDateFormat("EEE, MMM dd yyyy · HH:mm:ss", Locale.ENGLISH) }
+    val categorySuggestion = remember(tx, learnedCategoryRules) {
+        BankSmsParser.suggestCategoryForTransaction(tx, learnedCategoryRules)
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -503,6 +611,49 @@ internal fun TransactionDetailDialog(
                 }
 
                 Text("Category", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (categorySuggestion.matchedKeyword != null || categorySuggestion.category != tx.category) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = BotanicalSage.copy(alpha = 0.18f),
+                        border = BorderStroke(1.dp, BotanicalSage.copy(alpha = 0.65f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("tx_detail_category_suggestion")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "${categorySuggestion.category} · ${categorySuggestion.reason}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            if (categorySuggestion.category != tx.category) {
+                                TextButton(
+                                    onClick = { onUpdateCategory(categorySuggestion.category) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Text("Apply", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)

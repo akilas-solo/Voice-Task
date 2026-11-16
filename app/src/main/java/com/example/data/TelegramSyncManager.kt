@@ -172,7 +172,7 @@ object TelegramSyncManager {
 
                     // Send welcome confirmation in Telegram
                     val welcomeText = """
-                        <b>🌿 Voice Task Studio Connected!</b>
+                        <b>🌿 Finance &amp; Task Studio Connected!</b>
                         
                         Hi <b>@${escapeHtml(actualUsername)}</b>, your account is now linked.
                         
@@ -214,7 +214,7 @@ object TelegramSyncManager {
         return try {
             val timeStr = SimpleDateFormat("MMM dd, hh:mm:ss a", Locale.getDefault()).format(Date())
             val text = """
-                <b>🔔 Voice Task Studio Ping</b>
+                <b>🔔 Finance &amp; Task Studio Ping</b>
                 Your Telegram delivery channel for <b>@${escapeHtml(config.username)}</b> is active!
                 <i>Checked at $timeStr</i>
             """.trimIndent()
@@ -269,7 +269,7 @@ object TelegramSyncManager {
         }
 
         val db = AppDatabase.getDatabase(context)
-        val header = if (isReminder) "⏰ <b>Voice Task Reminder</b>" else "🎙️ <b>Voice Task Shared</b>"
+        val header = if (isReminder) "⏰ <b>Finance &amp; Task Reminder</b>" else "🎙️ <b>Finance &amp; Task Shared</b>"
         val bodyBuilder = StringBuilder().apply {
             append(header).append("\n")
             append("<b>").append(escapeHtml(task.title)).append("</b>\n")
@@ -322,7 +322,7 @@ object TelegramSyncManager {
                     caption = messageText.take(1000).toRequestBody(textPlain),
                     parseMode = "HTML".toRequestBody(textPlain),
                     title = task.title.take(64).toRequestBody(textPlain),
-                    performer = "Voice Task".toRequestBody(textPlain),
+                    performer = "Finance & Task".toRequestBody(textPlain),
                     durationSeconds = durationSecs.toRequestBody(textPlain),
                     replyMarkup = markupJson.toRequestBody(textPlain)
                 )
@@ -396,7 +396,7 @@ object TelegramSyncManager {
 
         val db = AppDatabase.getDatabase(context)
         val text = buildString {
-            append("📝 <b>Voice Task Notepad</b>\n")
+            append("📝 <b>Finance &amp; Task Notepad</b>\n")
             append("<b>").append(escapeHtml(note.title)).append("</b>\n")
             if (note.content.isNotBlank()) {
                 append("\n").append(escapeHtml(note.content.take(900))).append("\n")
@@ -426,7 +426,7 @@ object TelegramSyncManager {
                     caption = text.take(1000).toRequestBody(textPlain),
                     parseMode = "HTML".toRequestBody(textPlain),
                     title = note.title.take(64).toRequestBody(textPlain),
-                    performer = "Voice Task Notepad".toRequestBody(textPlain),
+                    performer = "Finance & Task Notepad".toRequestBody(textPlain),
                     durationSeconds = durationSecs.toRequestBody(textPlain),
                     replyMarkup = null
                 )
@@ -610,7 +610,7 @@ object TelegramSyncManager {
                                             chatId = verifiedChatId,
                                             messageId = callback.message.messageId,
                                             replyMarkup = TgInlineKeyboardMarkup(
-                                                listOf(listOf(TgInlineKeyboardButton("✅ Completed in Voice Task", callbackData = "noop")))
+                                                listOf(listOf(TgInlineKeyboardButton("✅ Completed in Finance & Task", callbackData = "noop")))
                                             )
                                         )
                                     )
@@ -676,7 +676,7 @@ object TelegramSyncManager {
                             text.startsWith("/tasks", ignoreCase = true) -> {
                                 val active = dao.getAllTasks().filter { !it.isCompleted }.take(10)
                                 val reply = if (active.isEmpty()) {
-                                    "🎉 <b>All caught up!</b> No pending tasks in Voice Task."
+                                    "🎉 <b>All caught up!</b> No pending tasks in Finance &amp; Task."
                                 } else {
                                     buildString {
                                         append("📋 <b>Active Tasks (${active.size})</b>\n\n")
@@ -724,7 +724,7 @@ object TelegramSyncManager {
                                             token = token,
                                             request = TgSendMessageRequest(
                                                 chatId = verifiedChatId,
-                                                text = "✅ Added to Voice Task Inbox:\n<b>${escapeHtml(newTitle.take(120))}</b>"
+                                                text = "✅ Added to Finance &amp; Task Inbox:\n<b>${escapeHtml(newTitle.take(120))}</b>"
                                             )
                                         )
                                     }
@@ -737,7 +737,7 @@ object TelegramSyncManager {
                                             token = token,
                                             request = TgSendMessageRequest(
                                                 chatId = verifiedChatId,
-                                                text = "AI bot commands are turned off in Voice Task Settings → Telegram."
+                                                text = "AI bot commands are turned off in Finance & Task Settings → Telegram."
                                             )
                                         )
                                     }
@@ -749,7 +749,7 @@ object TelegramSyncManager {
                                                 token = token,
                                                 request = TgSendMessageRequest(
                                                     chatId = verifiedChatId,
-                                                    text = "🔑 Add your Gemini, OpenAI, or Claude API key in Voice Task Settings → AI Studio to use /ask and /digest."
+                                                    text = "🔑 Add your Gemini, OpenAI, or Claude API key in Finance & Task Settings → AI Studio to use /ask and /digest."
                                                 )
                                             )
                                         }
@@ -819,7 +819,7 @@ object TelegramSyncManager {
                                         request = TgSendMessageRequest(
                                             chatId = verifiedChatId,
                                             text = """
-                                                <b>🌿 Voice Task Bot Commands</b>
+                                                <b>🌿 Finance &amp; Task Bot Commands</b>
                                                 • <code>/tasks</code> — List active tasks
                                                 • <code>/add Buy studio mic</code> — Add task to Inbox
                                                 • <code>/digest</code> — AI daily digest of tasks &amp; notes

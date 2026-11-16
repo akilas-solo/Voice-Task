@@ -76,7 +76,9 @@ class VoiceTaskRepository(private val voiceTaskDao: VoiceTaskDao) {
 
     suspend fun clearAllFinanceTransactions() = voiceTaskDao.clearAllFinanceTransactions()
 
-    suspend fun reparseStoredSmsTransactions(): Pair<Int, Int> {
+    suspend fun reparseStoredSmsTransactions(
+        learnedCategoryRules: Map<String, String> = emptyMap()
+    ): Pair<Int, Int> {
         val all = voiceTaskDao.getAllFinanceTransactions()
         var updatedCount = 0
         var removedCount = 0
@@ -86,7 +88,8 @@ class VoiceTaskRepository(private val voiceTaskDao: VoiceTaskDao) {
                 sender = tx.rawSender,
                 body = tx.rawSmsBody,
                 receivedTimestampMs = tx.timestamp,
-                source = tx.source
+                source = tx.source,
+                learnedCategoryRules = learnedCategoryRules
             )
             if (reparsed == null) {
                 voiceTaskDao.deleteFinanceTransactionById(tx.id)

@@ -28,6 +28,7 @@ import com.example.data.ConnectorDispatchLog
 import com.example.data.ConnectorResult
 import com.example.data.CustomWebhookConnector
 import com.example.data.EmailDeliveryMode
+import com.example.data.ExpenseCategorySuggester
 import com.example.data.ExternalConnectorManager
 import com.example.data.ExtractedVoiceTask
 import com.example.data.FinanceAnalyticsEngine
@@ -386,17 +387,22 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         val existingSnapshot = allFinanceTransactions.value
         clipboardInspectJob?.cancel()
         clipboardInspectJob = viewModelScope.launch {
+            val learnedRules = getLearnedCategoryRules()
             val matchResult = withContext(Dispatchers.Default) {
                 val hash = BankSmsParser.computeFingerprint("clipboard", text, 0L)
                 if (hash in dismissedClipboardHashes) return@withContext null
-                val parsed = BankSmsParser.parseBatchRawText(text, defaultSender = "Clipboard SMS")
+                val parsed = BankSmsParser.parseBatchRawText(
+                    rawInput = text,
+                    defaultSender = "Clipboard SMS",
+                    learnedCategoryRules = learnedRules
+                )
                 if (parsed.isEmpty()) return@withContext null
                 val existingFingerprints = existingSnapshot.mapTo(mutableSetOf()) { it.smsFingerprint }
                 val newMatches = parsed.filter { it.smsFingerprint !in existingFingerprints }
                 if (newMatches.isEmpty()) return@withContext null
                 val first = newMatches.first()
                 val summary = if (newMatches.size == 1) {
-                    "${first.bankName} · ${FinanceAnalyticsEngine.formatSignedMoney(first)}"
+                    "${first.bankName} · ${FinanceAnalyticsEngine.formatSignedMoney(first)} · ${first.category}"
                 } else {
                     "${newMatches.size} bank alerts detected (${first.bankName} & more)"
                 }
@@ -410,6 +416,26 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                 clipboardDetectedSummary = matchResult.second
             }
         }
+    }
+
+    fun getLearnedCategoryRules(): Map<String, String> {
+        val prefs = getApplication<Application>().getSharedPreferences("finance_category_rules_prefs", Context.MODE_PRIVATE)
+        val out = mutableMapOf<String, String>()
+        prefs.all.forEach { (k, v) ->
+            val cat = v as? String
+            if (k.isNotBlank() && cat != null && cat in ExpenseCategorySuggester.FIN_CATEGORIES) {
+                out[k] = cat
+            }
+        }
+        return out
+    }
+
+    private fun rememberLearnedCategoryRule(counterparty: String, category: String) {
+        if (category !in ExpenseCategorySuggester.FIN_CATEGORIES) return
+        val key = ExpenseCategorySuggester.normalizeCounterpartyKey(counterparty)
+        if (key.isEmpty()) return
+        val prefs = getApplication<Application>().getSharedPreferences("finance_category_rules_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString(key, category).apply()
     }
 
     fun importClipboardBankSms() {
@@ -431,8 +457,12 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     fun importSharedTextFromIntent(sharedText: String) {
         navigateTo(Screen.FINANCE)
         viewModelScope.launch {
-            val parsed = BankSmsParser.parseBatchRawText(sharedText, defaultSender = "Shared SMS")
-                .map { it.copy(source = "SHARE_INTENT") }
+            val learnedRules = getLearnedCategoryRules()
+            val parsed = BankSmsParser.parseBatchRawText(
+                rawInput = sharedText,
+                defaultSender = "Shared SMS",
+                learnedCategoryRules = learnedRules
+            ).map { it.copy(source = "SHARE_INTENT") }
             if (parsed.isEmpty()) {
                 financeStatusMessage = "Shared text did not contain a recognized Telebirr, CBE, or bank SMS alert."
                 financeStatusIsError = true
@@ -440,8 +470,9 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             }
             val inserted = repository.insertFinanceTransactionsDedup(parsed)
             val banksList = parsed.map { it.bankName }.distinct().take(4).joinToString(", ")
+            val catsList = parsed.map { it.category }.distinct().take(3).joinToString(", ")
             financeStatusMessage = if (inserted > 0) {
-                "Imported $inserted shared bank alert(s) ($banksList)."
+                "Imported $inserted shared bank alert(s) ($banksList · Suggested: $catsList)."
             } else {
                 "Shared bank alert (${parsed.first().bankName}) is already in your Finance ledger."
             }
@@ -461,13 +492,14 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             financeStatusMessage = "Importing SMS backup file(s)..."
             financeStatusIsError = false
             val appCtx = context.applicationContext
+            val learnedRules = getLearnedCategoryRules()
             var totalInspected = 0
             val allParsed = mutableListOf<FinanceTransaction>()
             var lastError: String? = null
             val formats = mutableSetOf<String>()
 
             uris.forEach { uri ->
-                val res = BankSmsFileParser.parseUri(appCtx, uri)
+                val res = BankSmsFileParser.parseUri(appCtx, uri, learnedCategoryRules = learnedRules)
                 totalInspected += res.totalRecordsInspected
                 if (res.formatLabel.isNotBlank()) formats.add(res.formatLabel)
                 allParsed.addAll(res.parsedTransactions)
@@ -481,8 +513,9 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             } else {
                 val inserted = repository.insertFinanceTransactionsDedup(allParsed)
                 val banksList = allParsed.map { it.bankName }.distinct().take(4).joinToString(", ")
+                val catsList = allParsed.map { it.category }.distinct().take(3).joinToString(", ")
                 financeStatusMessage = if (inserted > 0) {
-                    "Imported $inserted new transaction(s) from ${formats.joinToString("/")} ($banksList)."
+                    "Imported $inserted new transaction(s) from ${formats.joinToString("/")} ($banksList · Suggested: $catsList)."
                 } else {
                     "Verified ${allParsed.size} alert(s) in backup file — all already in your Finance ledger."
                 }
@@ -566,7 +599,12 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                     financeStatusIsError = false
                 }
                 val sinceMs = sinceDays?.let { System.currentTimeMillis() - it.toLong() * 86_400_000L }
-                val result = SmsInboxReader.scanInbox(getApplication(), sinceTimestampMs = sinceMs)
+                val learnedRules = getLearnedCategoryRules()
+                val result = SmsInboxReader.scanInbox(
+                    context = getApplication(),
+                    sinceTimestampMs = sinceMs,
+                    learnedCategoryRules = learnedRules
+                )
                 if (!result.permissionGranted) {
                     if (!silent) {
                         financeStatusMessage = result.errorMessage ?: "SMS permission is required."
@@ -584,13 +622,14 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                     lastAutoScanCompletedAtMs = System.currentTimeMillis()
                     if (!silent || newlyInserted > 0) {
                         val banksList = result.parsedTransactions.map { it.bankName }.distinct().take(4).joinToString(", ")
+                        val catsList = result.parsedTransactions.map { it.category }.distinct().take(3).joinToString(", ")
                         if (!silent) {
                             financeStatusMessage = if (result.parsedTransactions.isEmpty()) {
                                 "Checked ${result.totalMessagesScanned} SMS — no new bank alerts found in the last ${sinceDays ?: 90} days."
                             } else if (newlyInserted == 0) {
                                 "Checked ${result.totalMessagesScanned} SMS (${result.parsedTransactions.size} bank alerts verified, all synced)."
                             } else {
-                                "Imported $newlyInserted new transaction(s) from ${result.totalMessagesScanned} SMS ($banksList)."
+                                "Imported $newlyInserted new transaction(s) from ${result.totalMessagesScanned} SMS ($banksList · Suggested: $catsList)."
                             }
                             financeStatusIsError = false
                         }
@@ -605,20 +644,34 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     fun importManualBankSms(
         rawText: String,
         senderHint: String = "Manual SMS",
+        overrideCategory: String? = null,
         onDone: (Int, String) -> Unit = { _, _ -> }
     ) {
         viewModelScope.launch {
-            val parsed = BankSmsParser.parseBatchRawText(rawText, defaultSender = senderHint.ifBlank { "Manual SMS" })
-            if (parsed.isEmpty()) {
+            val learnedRules = getLearnedCategoryRules()
+            val parsedRaw = BankSmsParser.parseBatchRawText(
+                rawInput = rawText,
+                defaultSender = senderHint.ifBlank { "Manual SMS" },
+                learnedCategoryRules = learnedRules
+            )
+            if (parsedRaw.isEmpty()) {
                 val msg = "Could not detect a bank amount or Telebirr/CBE/Abyssinia format in that message."
                 financeStatusMessage = msg
                 financeStatusIsError = true
                 onDone(0, msg)
                 return@launch
             }
+            val parsed = if (!overrideCategory.isNullOrBlank() && parsedRaw.size == 1) {
+                val single = parsedRaw.first().copy(category = overrideCategory)
+                rememberLearnedCategoryRule(single.counterparty, overrideCategory)
+                listOf(single)
+            } else {
+                parsedRaw
+            }
             val inserted = repository.insertFinanceTransactionsDedup(parsed)
+            val catsList = parsed.map { it.category }.distinct().take(3).joinToString(", ")
             val msg = if (inserted > 0) {
-                "Imported $inserted transaction(s) (${parsed.joinToString(", ") { it.bankName }})."
+                "Imported $inserted transaction(s) (${parsed.joinToString(", ") { it.bankName }} · Categorized: $catsList)."
             } else {
                 "This SMS transaction is already in your Finance ledger."
             }
@@ -668,6 +721,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateFinanceCategory(tx: FinanceTransaction, category: String) {
         viewModelScope.launch {
+            rememberLearnedCategoryRule(tx.counterparty, category)
             repository.updateFinanceTransaction(tx.copy(category = category))
         }
     }
@@ -687,12 +741,14 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         viewModelScope.launch {
+            val learnedRules = getLearnedCategoryRules()
             val reparsed = withContext(Dispatchers.Default) {
                 BankSmsParser.parseSms(
                     sender = tx.rawSender,
                     body = tx.rawSmsBody,
                     receivedTimestampMs = tx.timestamp,
-                    source = tx.source
+                    source = tx.source,
+                    learnedCategoryRules = learnedRules
                 )
             }
             if (reparsed == null) {
@@ -720,11 +776,11 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun upgradeStoredFinanceTransactionsIfNeeded() {
         val prefs = getApplication<Application>().getSharedPreferences("finance_parser_prefs", Context.MODE_PRIVATE)
-        val currentVersion = 2
+        val currentVersion = 3
         if (prefs.getInt("parser_version", 1) >= currentVersion) return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                repository.reparseStoredSmsTransactions()
+                repository.reparseStoredSmsTransactions(learnedCategoryRules = getLearnedCategoryRules())
                 prefs.edit().putInt("parser_version", currentVersion).apply()
             }
         }
@@ -1468,7 +1524,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                             context = appCtx,
                             config = cfg,
                             toEmail = recipient,
-                            subject = "[Voice Task Feedback] $category",
+                            subject = "[Finance & Task Feedback] $category",
                             body = formattedBody
                         )
                     ) {
@@ -1494,7 +1550,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                         val mailRes = ExternalConnectorManager.launchMailComposer(
                             context = appCtx,
                             toEmail = recipient,
-                            subject = "[Voice Task Feedback] $category",
+                            subject = "[Finance & Task Feedback] $category",
                             body = formattedBody
                         )
                     ) {
@@ -2289,7 +2345,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                         config = cfg,
                         title = subjectOrTitle,
                         body = body,
-                        category = "Voice Task AI",
+                        category = "Finance & Task AI",
                         tags = tags
                     )) {
                         is ConnectorResult.Success -> onDone(true, res.message)
@@ -2380,10 +2436,10 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             when (val res = ExternalConnectorManager.createNotionPage(
                 context = getApplication(),
                 config = cfg,
-                title = "Voice Task Notion Connection Test",
-                body = "Your Voice Task AI & Connectors Hub successfully connected to Notion.",
+                title = "Finance & Task Notion Connection Test",
+                body = "Your Finance & Task AI & Connectors Hub successfully connected to Notion.",
                 category = "Settings Test",
-                tags = "VoiceTask, Verified"
+                tags = "FinanceAndTask, Verified"
             )) {
                 is ConnectorResult.Success -> onResult(true, res.message)
                 is ConnectorResult.Error -> onResult(false, res.reason)
@@ -2423,9 +2479,9 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             when (val res = ExternalConnectorManager.dispatchWebhook(
                 context = getApplication(),
                 webhook = webhook,
-                title = "Voice Task Webhook Ping",
-                content = "Test dispatch from Voice Task AI & Connectors Hub.",
-                tags = "test, voicetask"
+                title = "Finance & Task Webhook Ping",
+                content = "Test dispatch from Finance & Task AI & Connectors Hub.",
+                tags = "test, financeandtask"
             )) {
                 is ConnectorResult.Success -> onResult(true, res.message)
                 is ConnectorResult.Error -> onResult(false, res.reason)

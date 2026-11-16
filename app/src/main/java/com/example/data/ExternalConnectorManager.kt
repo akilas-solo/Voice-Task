@@ -141,7 +141,7 @@ object ExternalConnectorManager {
         }
 
         val dao = AppDatabase.getDatabase(context).voiceTaskDao()
-        val cleanTitle = title.trim().ifBlank { "Voice Task Note" }.take(200)
+        val cleanTitle = title.trim().ifBlank { "Finance & Task Note" }.take(200)
 
         try {
             val children = JSONArray()
@@ -160,7 +160,7 @@ object ExternalConnectorManager {
                 .filter { it.isNotBlank() }
 
             if (paragraphs.isEmpty()) {
-                children.put(buildNotionParagraphBlock("Captured via Voice Task Studio AI."))
+                children.put(buildNotionParagraphBlock("Captured via Finance & Task Studio AI."))
             } else {
                 paragraphs.take(25).forEach { para ->
                     para.chunked(1800).forEach { chunk ->
@@ -252,7 +252,7 @@ object ExternalConnectorManager {
         }
 
         val dao = AppDatabase.getDatabase(context).voiceTaskDao()
-        val cleanSubject = subject.trim().ifBlank { "Voice Task Update" }
+        val cleanSubject = subject.trim().ifBlank { "Finance & Task Update" }
 
         try {
             val payload = JSONObject().apply {
@@ -315,7 +315,7 @@ object ExternalConnectorManager {
         body: String
     ): ConnectorResult<String> {
         val dao = AppDatabase.getDatabase(context).voiceTaskDao()
-        val cleanSubject = subject.trim().ifBlank { "Voice Task Note" }
+        val cleanSubject = subject.trim().ifBlank { "Finance & Task Note" }
         val cleanRecipient = toEmail.trim()
 
         return try {
@@ -358,7 +358,7 @@ object ExternalConnectorManager {
         }
 
         val dao = AppDatabase.getDatabase(context).voiceTaskDao()
-        val cleanTitle = title.trim().ifBlank { "Voice Task Dispatch" }
+        val cleanTitle = title.trim().ifBlank { "Finance & Task Dispatch" }
 
         try {
             val payload = when (webhook.presetType) {
@@ -380,7 +380,7 @@ object ExternalConnectorManager {
                 }
                 WebhookPresetType.WEBHOOK -> {
                     JSONObject().apply {
-                        put("source", "Voice Task Studio")
+                        put("source", "Finance & Task Studio")
                         put("title", cleanTitle)
                         put("content", content.trim())
                         put("tags", tags)

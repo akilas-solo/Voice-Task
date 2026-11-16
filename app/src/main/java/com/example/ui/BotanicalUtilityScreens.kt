@@ -671,7 +671,7 @@ fun SettingsScreen(
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             UtilityHubRow(
                                 title = "User Guide & About",
-                                subtitle = "Workflow tips & Akilas Tech mission",
+                                subtitle = "Workflow tips & AKILAS TECH mission",
                                 icon = Icons.AutoMirrored.Filled.Help,
                                 onClick = { viewModel.navigateTo(VoiceTaskViewModel.Screen.USER_GUIDE) },
                                 testTag = "hub_guide"
@@ -688,7 +688,7 @@ fun SettingsScreen(
                     }
 
                     Text(
-                        text = "Voice Task · Calm Nordic Botanical Edition\nAll memos and notes remain private on your device.",
+                        text = "Finance & Task · Powered by AKILAS TECH\nAll memos, notes, and ledger data remain private on your device.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -936,7 +936,7 @@ fun FeedbackScreen(viewModel: VoiceTaskViewModel) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = statusMessage ?: "Thank you for helping refine Voice Task.",
+                        text = statusMessage ?: "Thank you for helping refine Finance & Task.",
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1084,19 +1084,28 @@ fun UserGuideScreen() {
                 ) {
                     Icon(
                         imageVector = Icons.Default.Spa,
-                        contentDescription = "Voice Task Botanical Emblem",
+                        contentDescription = "Finance & Task Botanical Emblem",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(26.dp)
                     )
-                    Text(
-                        text = "About Voice Task",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Column {
+                        Text(
+                            text = "About Finance & Task",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Powered by AKILAS TECH",
+                            fontFamily = StudioMonoFontFamily,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "Voice Task is developed by Akilas Tech for private, offline-first voice recording, structured notepad drafting, and two-way Telegram reminder delivery without ads or tracking.",
+                    text = "Finance & Task is powered by AKILAS TECH for private, offline-first voice recording, structured notepad drafting, smart SMS finance tracking, and two-way Telegram reminder delivery without ads or tracking.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )

@@ -20,7 +20,11 @@ object BankSmsFileParser {
     private val SMS_TAG_REGEX = Regex("""<sms\b([^>]*)/?>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
     private val XML_ATTR_REGEX = Regex("""(\w+)\s*=\s*"([^"]*)"""")
 
-    suspend fun parseUri(context: Context, uri: Uri): SmsFileImportResult = withContext(Dispatchers.IO) {
+    suspend fun parseUri(
+        context: Context,
+        uri: Uri,
+        learnedCategoryRules: Map<String, String> = emptyMap()
+    ): SmsFileImportResult = withContext(Dispatchers.IO) {
         try {
             val displayName = resolveDisplayName(context, uri)
             val mime = context.contentResolver.getType(uri).orEmpty()
@@ -39,7 +43,8 @@ object BankSmsFileParser {
             parseContent(
                 content = content,
                 fileNameOrMime = "$displayName $mime",
-                source = "BACKUP_FILE"
+                source = "BACKUP_FILE",
+                learnedCategoryRules = learnedCategoryRules
             )
         } catch (e: Exception) {
             SmsFileImportResult(
@@ -54,7 +59,8 @@ object BankSmsFileParser {
     fun parseContent(
         content: String,
         fileNameOrMime: String = "",
-        source: String = "BACKUP_FILE"
+        source: String = "BACKUP_FILE",
+        learnedCategoryRules: Map<String, String> = emptyMap()
     ): SmsFileImportResult {
         val trimmed = content.trim()
         if (trimmed.isEmpty()) {
@@ -64,14 +70,17 @@ object BankSmsFileParser {
         val hint = fileNameOrMime.lowercase(Locale.ENGLISH)
         return when {
             hint.contains(".xml") || hint.contains("xml") || trimmed.startsWith("<smses", ignoreCase = true) || trimmed.contains("<sms ", ignoreCase = true) -> {
-                parseXmlBackup(trimmed, source)
+                parseXmlBackup(trimmed, source, learnedCategoryRules)
             }
             hint.contains(".csv") || hint.contains("csv") || looksLikeCsv(trimmed) -> {
-                parseCsvBackup(trimmed, source)
+                parseCsvBackup(trimmed, source, learnedCategoryRules)
             }
             else -> {
-                val parsed = BankSmsParser.parseBatchRawText(trimmed, defaultSender = "Backup Import")
-                    .map { it.copy(source = source) }
+                val parsed = BankSmsParser.parseBatchRawText(
+                    rawInput = trimmed,
+                    defaultSender = "Backup Import",
+                    learnedCategoryRules = learnedCategoryRules
+                ).map { it.copy(source = source) }
                 val lineBlocks = trimmed.split(Regex("""\n{2,}|\r\n{2,}""")).count { it.isNotBlank() }.coerceAtLeast(1)
                 SmsFileImportResult(
                     totalRecordsInspected = lineBlocks,
@@ -82,7 +91,11 @@ object BankSmsFileParser {
         }
     }
 
-    private fun parseXmlBackup(xml: String, source: String): SmsFileImportResult {
+    private fun parseXmlBackup(
+        xml: String,
+        source: String,
+        learnedCategoryRules: Map<String, String>
+    ): SmsFileImportResult {
         val matches = SMS_TAG_REGEX.findAll(xml).toList()
         val parsed = mutableListOf<FinanceTransaction>()
         matches.forEach { tagMatch ->
@@ -99,7 +112,8 @@ object BankSmsFileParser {
                     sender = address,
                     body = body,
                     receivedTimestampMs = dateMs,
-                    source = source
+                    source = source,
+                    learnedCategoryRules = learnedCategoryRules
                 )
                 if (tx != null) parsed.add(tx)
             }
@@ -111,7 +125,11 @@ object BankSmsFileParser {
         )
     }
 
-    private fun parseCsvBackup(csv: String, source: String): SmsFileImportResult {
+    private fun parseCsvBackup(
+        csv: String,
+        source: String,
+        learnedCategoryRules: Map<String, String>
+    ): SmsFileImportResult {
         val rows = parseCsvRows(csv)
         if (rows.isEmpty()) return SmsFileImportResult(0, emptyList(), "CSV")
 
@@ -144,7 +162,8 @@ object BankSmsFileParser {
                     sender = sender,
                     body = body,
                     receivedTimestampMs = dateMs,
-                    source = source
+                    source = source,
+                    learnedCategoryRules = learnedCategoryRules
                 )
                 if (tx != null) parsed.add(tx)
             }

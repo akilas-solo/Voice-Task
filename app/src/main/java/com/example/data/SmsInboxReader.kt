@@ -29,7 +29,8 @@ object SmsInboxReader {
     suspend fun scanInbox(
         context: Context,
         sinceTimestampMs: Long? = null,
-        maxMessagesToInspect: Int = 1500
+        maxMessagesToInspect: Int = 1500,
+        learnedCategoryRules: Map<String, String> = emptyMap()
     ): SmsScanResult = withContext(Dispatchers.IO) {
         if (!hasReadSmsPermission(context)) {
             return@withContext SmsScanResult(
@@ -78,7 +79,8 @@ object SmsInboxReader {
                         sender = sender,
                         body = body,
                         receivedTimestampMs = dateMs,
-                        source = "SMS_INBOX"
+                        source = "SMS_INBOX",
+                        learnedCategoryRules = learnedCategoryRules
                     )
                     if (tx != null) {
                         parsed.putIfAbsent(tx.smsFingerprint, tx)

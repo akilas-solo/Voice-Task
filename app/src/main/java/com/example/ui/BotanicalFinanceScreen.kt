@@ -199,10 +199,16 @@ fun FinanceScreen(
     }
 
     if (showPasteSmsDialog) {
+        val learnedRules = remember(showPasteSmsDialog) { viewModel.getLearnedCategoryRules() }
         PasteBankSmsDialog(
+            learnedCategoryRules = learnedRules,
             onDismiss = { showPasteSmsDialog = false },
-            onImport = { rawText, senderHint ->
-                viewModel.importManualBankSms(rawText, senderHint) { count, msg ->
+            onImport = { rawText, senderHint, categoryOverride ->
+                viewModel.importManualBankSms(
+                    rawText = rawText,
+                    senderHint = senderHint,
+                    overrideCategory = categoryOverride
+                ) { count, msg ->
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                     if (count > 0) showPasteSmsDialog = false
                 }
@@ -232,8 +238,10 @@ fun FinanceScreen(
     }
 
     inspectingTx?.let { tx ->
+        val learnedRules = remember(tx.id) { viewModel.getLearnedCategoryRules() }
         TransactionDetailDialog(
             tx = tx,
+            learnedCategoryRules = learnedRules,
             onDismiss = { inspectingTx = null },
             onUpdateCategory = { newCat ->
                 viewModel.updateFinanceCategory(tx, newCat)

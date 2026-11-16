@@ -278,7 +278,7 @@ fun MainLayout(
             title = { Text("Allow SMS Inbox Access?") },
             text = {
                 Text(
-                    "Voice Task reads bank and mobile-money SMS alerts (such as Telebirr, CBE, and Bank of Abyssinia) directly on your device to track spending and generate financial summaries. Personal OTPs are automatically ignored."
+                    "Finance & Task reads bank and mobile-money SMS alerts (such as Telebirr, CBE, and Bank of Abyssinia) directly on your device to track spending and generate financial summaries. Personal OTPs are automatically ignored."
                 )
             },
             confirmButton = {

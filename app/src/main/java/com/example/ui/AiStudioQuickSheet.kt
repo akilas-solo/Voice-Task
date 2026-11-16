@@ -825,7 +825,7 @@ private fun AiDraftAndDispatchTabContent(
                         "- [${t.category}] ${t.title}${if (t.notes.isNotBlank()) ": ${t.notes.take(150)}" else ""}"
                     }
                 }
-                "Voice Task Status Update" to summaryBody
+                "Finance & Task Status Update" to summaryBody
             }
             sourceKey == "CUSTOM" -> {
                 "Custom Update" to customTopicInput.trim()
@@ -840,7 +840,7 @@ private fun AiDraftAndDispatchTabContent(
                 val n = allNotes.firstOrNull { it.id == id }
                 (n?.title ?: "Notepad Note") to (n?.content?.ifBlank { n.title } ?: "")
             }
-            else -> "Voice Task Note" to ""
+            else -> "Finance & Task Note" to ""
         }
     }
 

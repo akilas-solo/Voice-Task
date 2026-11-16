@@ -115,7 +115,7 @@ object AiProviderClient {
 
         val systemPrompt = if (allowStructuredActions) {
             """
-            You are Voice Task Studio AI, a calm, concise personal productivity assistant embedded inside a voice-memo and notepad app.
+            You are Finance & Task Studio AI, a calm, concise personal productivity assistant embedded inside a voice-memo, notepad, and finance app.
             You have direct read access to the user's current workspace snapshot below. Ground your answers accurately in these memos, alarms, and notes without inventing tasks or dates.
             
             Workspace Snapshot:
@@ -139,7 +139,7 @@ object AiProviderClient {
             """.trimIndent()
         } else {
             """
-            You are Voice Task Studio AI responding concisely inside Telegram chat.
+            You are Finance & Task Studio AI responding concisely inside Telegram chat.
             Use the user's workspace snapshot below to answer accurately without inventing tasks or notes.
             Keep formatting clean and scannable with short bullet points (no markdown tables or code fences).
             
@@ -307,7 +307,7 @@ object AiProviderClient {
             provider = provider,
             apiKey = key,
             model = model,
-            systemPrompt = "You are Voice Task Studio AI drafting clear, ready-to-send communications for external connectors.",
+            systemPrompt = "You are Finance & Task Studio AI drafting clear, ready-to-send communications for external connectors.",
             messages = listOf(true to prompt),
             expectJson = true
         )
@@ -319,13 +319,13 @@ object AiProviderClient {
                 val obj = extractJsonObject(res.data)
                 val draft = if (obj != null) {
                     GeneratedConnectorDraft(
-                        subject = obj.optString("subject", sourceTitle.ifBlank { "Voice Task Update" }),
+                        subject = obj.optString("subject", sourceTitle.ifBlank { "Finance & Task Update" }),
                         body = obj.optString("body", res.data).trim(),
                         tags = obj.optString("tags", "")
                     )
                 } else {
                     GeneratedConnectorDraft(
-                        subject = sourceTitle.ifBlank { "Voice Task Update" },
+                        subject = sourceTitle.ifBlank { "Finance & Task Update" },
                         body = res.data.trim(),
                         tags = ""
                     )
@@ -350,7 +350,7 @@ object AiProviderClient {
         }
 
         val systemPrompt = """
-            You are Voice Task Financial Analyst. You analyze the user's parsed bank & mobile-money SMS transactions (Telebirr, CBE, Bank of Abyssinia, Awash, Dashen, Nib, Coop, M-Pesa, etc.).
+            You are Finance & Task Financial Analyst. You analyze the user's parsed bank & mobile-money SMS transactions (Telebirr, CBE, Bank of Abyssinia, Awash, Dashen, Nib, Coop, M-Pesa, etc.).
             Ground every number, bank balance, merchant name, date, and time strictly in the verified Financial Ledger Snapshot provided below. Never fabricate amounts or transactions.
             If asked about a specific time, day, or month, highlight the exact matching transactions, total income, total outflow, service charges, net flow, and key observations.
             Keep your answer well-structured, concise, and practical with clear bullet points (no markdown tables).

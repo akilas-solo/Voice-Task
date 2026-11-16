@@ -3,6 +3,7 @@ package com.example
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import org.junit.Rule
@@ -24,6 +25,8 @@ class MainActivitySmokeTest {
     fun `mainActivity composes and switches all bottom navigation tabs cleanly`() {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("nav_memos").assertIsDisplayed()
+        composeRule.onNodeWithText("Finance & Task").assertIsDisplayed()
+        composeRule.onNodeWithText("Powered by AKILAS TECH").assertIsDisplayed()
 
         composeRule.onNodeWithTag("nav_notepad").performClick()
         composeRule.waitForIdle()

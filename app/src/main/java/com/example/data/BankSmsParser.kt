@@ -7,16 +7,8 @@ import java.util.TimeZone
 
 object BankSmsParser {
 
-    val FIN_CATEGORIES = listOf(
-        "Transfers",
-        "Airtime & Data",
-        "Merchant & Shopping",
-        "Food & Utilities",
-        "Salary & Income",
-        "ATM & Cash",
-        "Bank Charges",
-        "Other"
-    )
+    val FIN_CATEGORIES: List<String>
+        get() = ExpenseCategorySuggester.FIN_CATEGORIES
 
     private val OTP_EXCLUDE_REGEX = Regex(
         """\b(otp|one[\s-]?time(?:\s+(?:pass(?:word|code)?|pin|code))?|verification\s+code|pin\s+code|security\s+code|2fa|passcode|login\s+code|secret\s+code|expires\s+in\s+\d+|do\s+not\s+share\s+(?:this|your)|changed\s+your\s+pin|pin\s+(?:reset|changed))\b""",
@@ -96,26 +88,6 @@ object BankSmsParser {
         """\b(airtime|recharg(?:e|ed)|top[\s-]?up|mobile\s+(?:package|bundle|data)|voice\s+package|data\s+package|internet\s+package|ethio\s+telecom\s+(?:airtime|package|bill|recharge))\b""",
         RegexOption.IGNORE_CASE
     )
-    private val ATM_CATEGORY_REGEX = Regex(
-        """\b(atm|withdrawn|withdrawal|cash[\s-]?out|branch\s+withdrawal)\b""",
-        RegexOption.IGNORE_CASE
-    )
-    private val FOOD_UTILITIES_CATEGORY_REGEX = Regex(
-        """\b(electric|electricity|eeu|water|aawsa|utility|utilities|dstv|wifi|broadband|restaurant|cafe|coffee|supermarket|grocery|food|bakery|kitchen)\b""",
-        RegexOption.IGNORE_CASE
-    )
-    private val BANK_CHARGES_CATEGORY_REGEX = Regex(
-        """\b(service\s+charge|bank\s+charge|maintenance\s+fee|commission\s+fee)\b""",
-        RegexOption.IGNORE_CASE
-    )
-    private val TRANSFER_CATEGORY_REGEX = Regex(
-        """\b(transfer(?:red|ed)?|sent\s+to|p2p|inward\s+transfer)\b""",
-        RegexOption.IGNORE_CASE
-    )
-    private val MERCHANT_CATEGORY_REGEX = Regex(
-        """\b(merchant|pos|shop|store|market|pharmacy|clinic|hospital|fuel|hotel|paid\s+to|you\s+paid|have\s+paid)\b""",
-        RegexOption.IGNORE_CASE
-    )
 
     private val DATE_TIME_PATTERNS: List<Pair<Regex, String>> = listOf(
         Regex("""(\d{2}/\d{2}/\d{4})\s+(?:at\s+)?(\d{1,2}:\d{2}:\d{2})""") to "dd/MM/yyyy HH:mm:ss",
@@ -140,7 +112,8 @@ object BankSmsParser {
         sender: String,
         body: String,
         receivedTimestampMs: Long = System.currentTimeMillis(),
-        source: String = "SMS_INBOX"
+        source: String = "SMS_INBOX",
+        learnedCategoryRules: Map<String, String> = emptyMap()
     ): FinanceTransaction? {
         val cleanSender = sender.trim().take(64)
         val trimmedBody = body.trim()
@@ -178,7 +151,13 @@ object BankSmsParser {
         val referenceId = extractReference(semanticBody).ifBlank { extractReference(cleanBody) }
         val embeddedTs = extractEmbeddedTimestamp(cleanBody)
         val effectiveTimestamp = embeddedTs ?: receivedTimestampMs
-        val category = classifyCategory(semanticBody, txType, counterparty)
+        val suggestion = ExpenseCategorySuggester.suggestCategory(
+            semanticBody = semanticBody,
+            counterparty = counterparty,
+            type = txType,
+            learnedRules = learnedCategoryRules
+        )
+        val category = suggestion.category
 
         val displayBankName = if (institution == BankInstitution.OTHER) {
             inferOtherBankName(cleanSender, cleanBody)
@@ -213,7 +192,8 @@ object BankSmsParser {
     fun parseBatchRawText(
         rawInput: String,
         defaultSender: String = "Manual SMS",
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        learnedCategoryRules: Map<String, String> = emptyMap()
     ): List<FinanceTransaction> {
         val clean = rawInput.trim()
         if (clean.isBlank()) return emptyList()
@@ -225,7 +205,8 @@ object BankSmsParser {
                 sender = defaultSender,
                 body = block,
                 receivedTimestampMs = nowMs + idx,
-                source = "MANUAL_PASTE"
+                source = "MANUAL_PASTE",
+                learnedCategoryRules = learnedCategoryRules
             )
         }
         if (parsedBlocks.isNotEmpty()) return parsedBlocks
@@ -238,7 +219,8 @@ object BankSmsParser {
                     sender = defaultSender,
                     body = line,
                     receivedTimestampMs = nowMs + idx,
-                    source = "MANUAL_PASTE"
+                    source = "MANUAL_PASTE",
+                    learnedCategoryRules = learnedCategoryRules
                 )
             }
         }
@@ -425,20 +407,53 @@ object BankSmsParser {
         return ""
     }
 
-    private fun classifyCategory(semanticBody: String, type: TransactionType, counterparty: String): String {
-        val combined = "$semanticBody $counterparty"
-        val lower = combined.lowercase(Locale.ROOT)
-        return when {
-            lower.contains("salary") || lower.contains("payroll") -> "Salary & Income"
-            type == TransactionType.INCOME -> "Salary & Income"
-            AIRTIME_CATEGORY_REGEX.containsMatchIn(combined) -> "Airtime & Data"
-            ATM_CATEGORY_REGEX.containsMatchIn(combined) -> "ATM & Cash"
-            FOOD_UTILITIES_CATEGORY_REGEX.containsMatchIn(combined) -> "Food & Utilities"
-            BANK_CHARGES_CATEGORY_REGEX.containsMatchIn(combined) -> "Bank Charges"
-            type == TransactionType.TRANSFER || TRANSFER_CATEGORY_REGEX.containsMatchIn(combined) -> "Transfers"
-            MERCHANT_CATEGORY_REGEX.containsMatchIn(combined) -> "Merchant & Shopping"
-            else -> "Other"
+    fun suggestCategoryForSms(
+        rawBody: String,
+        senderHint: String = "",
+        learnedCategoryRules: Map<String, String> = emptyMap()
+    ): CategorySuggestionResult? {
+        val trimmed = rawBody.trim()
+        if (trimmed.length < 3) return null
+        val firstBlock = trimmed.split(BLANK_LINE_SPLIT_REGEX).firstOrNull()?.trim().orEmpty()
+        if (firstBlock.isBlank()) return null
+
+        val parsed = parseSms(
+            sender = senderHint.ifBlank { "Manual SMS" },
+            body = firstBlock,
+            learnedCategoryRules = learnedCategoryRules
+        )
+        if (parsed != null) {
+            val semantic = stripFooterBoilerplate(firstBlock)
+            return ExpenseCategorySuggester.suggestCategory(
+                semanticBody = semantic,
+                counterparty = parsed.counterparty,
+                type = parsed.transactionType,
+                learnedRules = learnedCategoryRules
+            )
         }
+
+        val semantic = stripFooterBoilerplate(firstBlock)
+        val detectedType = detectTransactionType(semantic)
+        val fallbackSuggestion = ExpenseCategorySuggester.suggestCategory(
+            semanticBody = semantic,
+            counterparty = "",
+            type = detectedType,
+            learnedRules = learnedCategoryRules
+        )
+        return fallbackSuggestion.takeIf { it.matchedKeyword != null || it.category != "Other" }
+    }
+
+    fun suggestCategoryForTransaction(
+        tx: FinanceTransaction,
+        learnedCategoryRules: Map<String, String> = emptyMap()
+    ): CategorySuggestionResult {
+        val semantic = stripFooterBoilerplate(tx.rawSmsBody.ifBlank { tx.counterparty })
+        return ExpenseCategorySuggester.suggestCategory(
+            semanticBody = semantic,
+            counterparty = tx.counterparty,
+            type = tx.transactionType,
+            learnedRules = learnedCategoryRules
+        )
     }
 
     fun extractEmbeddedTimestamp(body: String): Long? {

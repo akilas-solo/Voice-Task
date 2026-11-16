@@ -29,6 +29,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import com.example.data.ExpenseCategorySuggester
 import com.example.data.FinanceSummary
 import com.example.ui.CompactFinanceActionBar
 import com.example.ui.FinanceFilterBottomSheet
@@ -36,6 +37,8 @@ import com.example.ui.FinanceFilterPanel
 import com.example.ui.FinanceHeroSummaryCard
 import com.example.ui.FinanceLedgerSearchHeader
 import com.example.ui.FinanceOverviewComposable
+import com.example.ui.PasteBankSmsDialog
+import com.example.ui.TransactionDetailDialog
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -755,5 +758,122 @@ class FinanceModuleTest {
         composeTestRule.onNodeWithText("Filtered: Telebirr").assertIsDisplayed()
         composeTestRule.onNodeWithTag("finance_search_input").performTextInput("Abebe")
         composeTestRule.onNodeWithText("Abebe").assertIsDisplayed()
+    }
+
+    @Test
+    fun `auto suggests expense categories from sms keywords including groceries rent and utility`() {
+        val grocerySms = "Dear Customer, you have paid ETB 1,240.00 to Shoa Supermarket for groceries on 16/11/2026 11:20:00. Current balance is ETB 8,400.00."
+        val rentSms = "Dear Customer, you have transferred ETB 12,000.00 to Dawit Tadesse for monthly apartment rent on 16/11/2026 09:05:00. Ref FT26119001."
+        val utilitySms = "You have paid ETB 680.50 via CBE Birr for electricity utility bill on 15/11/2026 16:40:00. Balance is ETB 4,100.00."
+        val pharmacySms = "You have paid ETB 350.00 to Kenema Pharmacy on 15/11/2026 14:15:00. Current telebirr balance is ETB 950.00."
+        val learnedMerchantSms = "You have paid ETB 210.00 to Blue Sky Trading on 15/11/2026 12:00:00. Current telebirr balance is ETB 740.00."
+
+        val txGrocery = BankSmsParser.parseSms("127", grocerySms)
+        val txRent = BankSmsParser.parseSms("CBE", rentSms)
+        val txUtility = BankSmsParser.parseSms("CBEBirr", utilitySms)
+        val txPharmacy = BankSmsParser.parseSms("127", pharmacySms)
+
+        assertNotNull(txGrocery)
+        assertEquals("Groceries", txGrocery!!.category)
+
+        assertNotNull(txRent)
+        assertEquals("Rent & Housing", txRent!!.category)
+
+        assertNotNull(txUtility)
+        assertEquals("Utilities", txUtility!!.category)
+
+        assertNotNull(txPharmacy)
+        assertEquals("Health & Medical", txPharmacy!!.category)
+
+        // Verify learned counterparty rule applies automatically for ambiguous merchants
+        val learnedRules = mapOf(
+            ExpenseCategorySuggester.normalizeCounterpartyKey("Blue Sky Trading") to "Groceries"
+        )
+        val txLearned = BankSmsParser.parseSms(
+            sender = "127",
+            body = learnedMerchantSms,
+            learnedCategoryRules = learnedRules
+        )
+        assertNotNull(txLearned)
+        assertEquals("Groceries", txLearned!!.category)
+
+        // Verify live suggestion metadata exposes matched keywords & alternatives
+        val preview = BankSmsParser.suggestCategoryForSms(rentSms)
+        assertNotNull(preview)
+        assertEquals("Rent & Housing", preview!!.category)
+        assertNotNull(preview.matchedKeyword)
+        assertTrue(preview.alternatives.isNotEmpty())
+    }
+
+    @Test
+    fun `paste sms dialog previews suggested category and supports quick override`() {
+        var importedCategoryOverride: String? = null
+        var importedBody = ""
+
+        val sampleRentSms = "You have transferred ETB 9,500.00 to Landlord Mekonnen for rent on 16/11/2026 10:00:00. Current telebirr balance is ETB 2,500.00."
+
+        composeTestRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                PasteBankSmsDialog(
+                    onDismiss = {},
+                    onImport = { body, _, overrideCat ->
+                        importedBody = body
+                        importedCategoryOverride = overrideCat
+                    }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("paste_sms_body_input").performTextInput(sampleRentSms)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("paste_sms_category_suggestion_card").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Suggested: Rent & Housing").assertIsDisplayed()
+
+        // Tap alternative category chip inside suggestion card and verify live state before import
+        composeTestRule.onNodeWithText("Transfers").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Suggested: Transfers").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("confirm_paste_sms_btn").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(sampleRentSms, importedBody)
+        assertEquals("Transfers", importedCategoryOverride)
+    }
+
+    @Test
+    fun `transaction detail dialog displays keyword suggestion banner and applies category`() {
+        var appliedCategory = ""
+
+        val sampleGroceryTx = FinanceTransaction(
+            id = 42,
+            smsFingerprint = "fp_grocery_detail",
+            bankName = "Telebirr",
+            bankCode = BankInstitution.TELEBIRR.code,
+            type = TransactionType.EXPENSE.name,
+            amount = 450.0,
+            counterparty = "Fresh Groceries Mart",
+            category = "Other",
+            rawSender = "127",
+            rawSmsBody = "You have paid ETB 450.00 to Fresh Groceries Mart for groceries.",
+            timestamp = 1763280000000L
+        )
+
+        composeTestRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                TransactionDetailDialog(
+                    tx = sampleGroceryTx,
+                    onDismiss = {},
+                    onUpdateCategory = { appliedCategory = it },
+                    onUpdateType = {},
+                    onReparse = {},
+                    onDelete = {}
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("tx_detail_category_suggestion").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Apply").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Groceries", appliedCategory)
     }
 }
