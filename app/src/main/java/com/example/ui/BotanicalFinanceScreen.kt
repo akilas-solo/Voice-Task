@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,7 +63,8 @@ fun FinanceScreen(
     val monthlySpendingTotal = monthlyTotals.first
     val monthlyIncomeTotal = monthlyTotals.second
 
-    var selectedSubTab by remember { mutableIntStateOf(0) } // 0 = Overview, 1 = Ledger, 2 = Analytics
+    var selectedSubTab by rememberSaveable { mutableIntStateOf(0) } // 0 = Overview, 1 = Ledger, 2 = Insights
+    var showFilterSheet by remember { mutableStateOf(false) }
     var showDayPicker by remember { mutableStateOf(false) }
     var showMonthPicker by remember { mutableStateOf(false) }
     var showTimeWindowDialog by remember { mutableStateOf(false) }
@@ -114,6 +116,47 @@ fun FinanceScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val openBackupImporter = {
+        backupFileLauncher.launch(
+            arrayOf(
+                "text/plain",
+                "text/csv",
+                "text/comma-separated-values",
+                "text/xml",
+                "application/xml",
+                "*/*"
+            )
+        )
+    }
+
+    if (showFilterSheet) {
+        FinanceFilterBottomSheet(
+            filterState = filterState,
+            filteredCount = filteredTransactions.size,
+            onDismiss = { showFilterSheet = false },
+            onSelectPeriod = { mode ->
+                when (mode) {
+                    FinancePeriodMode.SPECIFIC_DAY -> {
+                        showFilterSheet = false
+                        showDayPicker = true
+                    }
+                    FinancePeriodMode.SPECIFIC_MONTH -> {
+                        showFilterSheet = false
+                        showMonthPicker = true
+                    }
+                    else -> viewModel.setFinancePeriodMode(mode)
+                }
+            },
+            onOpenTimeWindow = {
+                showFilterSheet = false
+                showTimeWindowDialog = true
+            },
+            onSelectBank = { viewModel.setFinanceBankFilter(it) },
+            onSelectType = { viewModel.setFinanceTypeFilter(it) },
+            onResetAll = { viewModel.resetFinanceFilters() }
+        )
     }
 
     if (showDayPicker) {
@@ -364,8 +407,26 @@ fun FinanceScreen(
             }
         }
 
-        // 2. Single Unified Summary Hero Card (+ Menu, Balances, and Permission Prompt)
-        item {
+        // 2. Compact Action Bar (Period Pill + Sync SMS + Filters Sheet + Import/Add Menu)
+        item(key = "compact_action_bar") {
+            CompactFinanceActionBar(
+                periodLabel = summary.periodLabel,
+                filterState = filterState,
+                isScanning = viewModel.isFinanceScanning,
+                hasAnyData = allTransactions.isNotEmpty(),
+                hasSmsPermission = hasSmsPermission(),
+                onScanSmsClick = triggerSmsScan,
+                onOpenFilters = { showFilterSheet = true },
+                onPasteSmsClick = { showPasteSmsDialog = true },
+                onImportFileClick = openBackupImporter,
+                onManualAddClick = { showManualTxDialog = true },
+                onResetFilters = { viewModel.resetFinanceFilters() },
+                onClearAllClick = { showClearConfirm = true }
+            )
+        }
+
+        // 3. Slim Unified Net Cashflow & Account Balances Card
+        item(key = "slim_hero_summary") {
             FinanceHeroSummaryCard(
                 summary = summary,
                 monthlySpendingTotal = monthlySpendingTotal,
@@ -375,89 +436,70 @@ fun FinanceScreen(
                 isScanning = viewModel.isFinanceScanning,
                 hasAnyData = allTransactions.isNotEmpty(),
                 hasSmsPermission = hasSmsPermission(),
+                showTopActions = false,
                 onRequestSmsPermission = onRequestSmsPermission,
                 onScanSmsClick = triggerSmsScan,
                 onPasteSmsClick = { showPasteSmsDialog = true },
-                onImportFileClick = {
-                    backupFileLauncher.launch(
-                        arrayOf(
-                            "text/plain",
-                            "text/csv",
-                            "text/comma-separated-values",
-                            "text/xml",
-                            "application/xml",
-                            "*/*"
-                        )
-                    )
-                },
+                onImportFileClick = openBackupImporter,
                 onManualAddClick = { showManualTxDialog = true },
                 onResetFilters = { viewModel.resetFinanceFilters() },
                 onClearAllClick = { showClearConfirm = true }
             )
         }
 
-        // 3. Search & Collapsible Filter Drawer
-        item {
-            FinanceFilterPanel(
-                filterState = filterState,
-                onSelectPeriod = { mode ->
-                    when (mode) {
-                        FinancePeriodMode.SPECIFIC_DAY -> showDayPicker = true
-                        FinancePeriodMode.SPECIFIC_MONTH -> showMonthPicker = true
-                        else -> viewModel.setFinancePeriodMode(mode)
-                    }
-                },
-                onOpenTimeWindow = { showTimeWindowDialog = true },
-                onSelectBank = { viewModel.setFinanceBankFilter(it) },
-                onSelectType = { viewModel.setFinanceTypeFilter(it) },
-                onSearchChange = { viewModel.setFinanceSearchQuery(it) }
-            )
-        }
-
-        // 5. Sub-tabs: Overview | Transactions Ledger | Analytics
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+        // 4. Three Clean Sub-tabs: Overview | Ledger | Insights
+        item(key = "finance_tabs") {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                val subTabs = listOf(
-                    Triple(0, "Overview", Icons.Default.Dashboard),
-                    Triple(1, "Ledger (${filteredTransactions.size})", Icons.AutoMirrored.Filled.ReceiptLong),
-                    Triple(2, "Analytics", Icons.Default.BarChart)
-                )
-                subTabs.forEach { (tabIdx, title, icon) ->
-                    val selected = selectedSubTab == tabIdx
-                    Surface(
-                        onClick = { selectedSubTab = tabIdx },
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("finance_subtab_$tabIdx")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val subTabs = listOf(
+                        Triple(0, "Overview", Icons.Default.Dashboard),
+                        Triple(1, "Ledger (${filteredTransactions.size})", Icons.AutoMirrored.Filled.ReceiptLong),
+                        Triple(2, "Insights", Icons.Default.BarChart)
+                    )
+                    subTabs.forEach { (tabIdx, title, icon) ->
+                        val selected = selectedSubTab == tabIdx
+                        Surface(
+                            onClick = { selectedSubTab = tabIdx },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
+                            border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)) else null,
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 44.dp)
+                                .testTag("finance_subtab_$tabIdx")
                         ) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = title,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 9.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp),
+                                    tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = title,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -479,6 +521,14 @@ fun FinanceScreen(
                 )
             }
             1 -> {
+                item(key = "ledger_search_header") {
+                    FinanceLedgerSearchHeader(
+                        filterState = filterState,
+                        onSearchChange = { viewModel.setFinanceSearchQuery(it) },
+                        onOpenFilters = { showFilterSheet = true },
+                        onResetFilters = { viewModel.resetFinanceFilters() }
+                    )
+                }
                 if (filteredTransactions.isEmpty()) {
                     item(key = "ledger_empty") {
                         FinanceEmptyLedgerState(
@@ -499,7 +549,10 @@ fun FinanceScreen(
                 }
             }
             else -> {
-                financeAnalyticsItems(summary = summary)
+                financeAnalyticsItems(
+                    transactions = filteredTransactions,
+                    summary = summary
+                )
             }
         }
 
@@ -523,7 +576,8 @@ private fun LazyListScope.financeOverviewItems(
     item(key = "overview_chart_card") {
         FinanceOverviewChartCard(
             transactions = transactions,
-            primaryCurrency = primaryCurrency
+            primaryCurrency = primaryCurrency,
+            lockedMode = OverviewChartMode.TREND_LINE
         )
     }
 

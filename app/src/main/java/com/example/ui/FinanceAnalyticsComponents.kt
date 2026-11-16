@@ -292,12 +292,12 @@ internal fun FinanceTransactionCard(
 
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -387,7 +387,17 @@ internal fun FinanceTransactionCard(
     }
 }
 
-internal fun LazyListScope.financeAnalyticsItems(summary: FinanceSummary) {
+internal fun LazyListScope.financeAnalyticsItems(
+    transactions: List<FinanceTransaction>,
+    summary: FinanceSummary
+) {
+    item(key = "analytics_spending_mix_pie") {
+        FinanceOverviewChartCard(
+            transactions = transactions,
+            primaryCurrency = summary.primaryCurrency,
+            lockedMode = OverviewChartMode.PIE_CHART
+        )
+    }
     item(key = "analytics_bank_comparison") {
         AnalyticsBankComparisonCard(summary = summary)
     }

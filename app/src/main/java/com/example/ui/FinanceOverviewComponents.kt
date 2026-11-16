@@ -58,7 +58,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private enum class OverviewChartMode {
+internal enum class OverviewChartMode {
     TREND_LINE,
     PIE_CHART
 }
@@ -66,9 +66,10 @@ private enum class OverviewChartMode {
 @Composable
 internal fun FinanceOverviewChartCard(
     transactions: List<FinanceTransaction>,
-    primaryCurrency: String
+    primaryCurrency: String,
+    lockedMode: OverviewChartMode? = null
 ) {
-    var chartMode by remember { mutableStateOf(OverviewChartMode.TREND_LINE) }
+    var chartMode by remember(lockedMode) { mutableStateOf(lockedMode ?: OverviewChartMode.TREND_LINE) }
     var categorizeByBank by remember { mutableStateOf(false) } // false = By Spending Type, true = By Bank
     var selectedSliceKey by remember { mutableStateOf<String?>(null) }
 
@@ -125,7 +126,9 @@ internal fun FinanceOverviewChartCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "VISUALIZATION",
+                        text = if (lockedMode == OverviewChartMode.PIE_CHART) "SPENDING BREAKDOWN"
+                        else if (lockedMode == OverviewChartMode.TREND_LINE) "CASHFLOW PULSE"
+                        else "VISUALIZATION",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.8.sp,
@@ -146,7 +149,8 @@ internal fun FinanceOverviewChartCard(
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (lockedMode == null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     val trendSelected = chartMode == OverviewChartMode.TREND_LINE
                     Surface(
                         onClick = { chartMode = OverviewChartMode.TREND_LINE },
@@ -206,6 +210,7 @@ internal fun FinanceOverviewChartCard(
                             )
                         }
                     }
+                }
                 }
             }
 
@@ -614,6 +619,240 @@ private fun formatCompactAxisAmount(value: Double): String {
 }
 
 @Composable
+internal fun CompactFinanceActionBar(
+    periodLabel: String,
+    filterState: FinanceFilterState,
+    isScanning: Boolean,
+    hasAnyData: Boolean,
+    hasSmsPermission: Boolean,
+    onScanSmsClick: () -> Unit,
+    onOpenFilters: () -> Unit,
+    onPasteSmsClick: () -> Unit,
+    onImportFileClick: () -> Unit,
+    onManualAddClick: () -> Unit,
+    onResetFilters: () -> Unit,
+    onClearAllClick: () -> Unit
+) {
+    val activeFilterCount = remember(filterState) {
+        var count = 0
+        if (filterState.periodMode != FinancePeriodMode.ALL) count++
+        if (filterState.timePreset != TimeOfDayPreset.ANY) count++
+        if (filterState.selectedBankCode != "ALL") count++
+        if (filterState.typeFilter != "ALL") count++
+        count
+    }
+    val hasActiveFilterOrSearch = activeFilterCount > 0 || filterState.searchQuery.isNotBlank()
+    var showAddMenu by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("finance_compact_action_bar"),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Surface(
+                onClick = onOpenFilters,
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+                modifier = Modifier.heightIn(min = 38.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = periodLabel,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            if (hasActiveFilterOrSearch) {
+                IconButton(
+                    onClick = onResetFilters,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .testTag("finance_reset_filters_quick_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear active filters",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            FilledTonalButton(
+                onClick = onScanSmsClick,
+                enabled = !isScanning,
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 11.dp),
+                modifier = Modifier
+                    .height(44.dp)
+                    .testTag("finance_scan_sms_btn")
+            ) {
+                if (isScanning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text("Syncing", fontSize = 12.sp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Sync", fontSize = 12.sp)
+                }
+            }
+
+            Surface(
+                onClick = onOpenFilters,
+                shape = RoundedCornerShape(12.dp),
+                color = if (activeFilterCount > 0) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+                border = BorderStroke(
+                    1.dp,
+                    if (activeFilterCount > 0) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outline
+                ),
+                modifier = Modifier
+                    .height(44.dp)
+                    .testTag("finance_open_filters_btn")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = "Filters",
+                        tint = if (activeFilterCount > 0) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(17.dp)
+                    )
+                    if (activeFilterCount > 0) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                text = activeFilterCount.toString(),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Box {
+                FilledIconButton(
+                    onClick = { showAddMenu = true },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .size(44.dp)
+                        .testTag("finance_add_menu_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Add or import transactions"
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = showAddMenu,
+                    onDismissRequest = { showAddMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Paste Bank SMS") },
+                        leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null) },
+                        onClick = {
+                            showAddMenu = false
+                            onPasteSmsClick()
+                        },
+                        modifier = Modifier.testTag("finance_menu_paste_sms")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Import Backup File") },
+                        leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null) },
+                        enabled = !isScanning,
+                        onClick = {
+                            showAddMenu = false
+                            onImportFileClick()
+                        },
+                        modifier = Modifier.testTag("finance_menu_import_file")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Add Manual Entry") },
+                        leadingIcon = { Icon(Icons.Default.EditNote, contentDescription = null) },
+                        onClick = {
+                            showAddMenu = false
+                            onManualAddClick()
+                        },
+                        modifier = Modifier.testTag("finance_menu_add_manual")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (hasSmsPermission) "Re-scan 90d Inbox" else "Allow & Scan SMS") },
+                        leadingIcon = { Icon(Icons.Default.Sms, contentDescription = null) },
+                        enabled = !isScanning,
+                        onClick = {
+                            showAddMenu = false
+                            onScanSmsClick()
+                        },
+                        modifier = Modifier.testTag("finance_menu_scan_sms")
+                    )
+                    if (hasAnyData) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        DropdownMenuItem(
+                            text = { Text("Clear Ledger", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.DeleteSweep,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            onClick = {
+                                showAddMenu = false
+                                onClearAllClick()
+                            },
+                            modifier = Modifier.testTag("finance_menu_clear_all")
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun FinanceHeroSummaryCard(
     summary: FinanceSummary,
     monthlySpendingTotal: Double = 0.0,
@@ -623,6 +862,7 @@ internal fun FinanceHeroSummaryCard(
     isScanning: Boolean,
     hasAnyData: Boolean,
     hasSmsPermission: Boolean = true,
+    showTopActions: Boolean = true,
     onRequestSmsPermission: () -> Unit = {},
     onScanSmsClick: () -> Unit,
     onPasteSmsClick: () -> Unit,
@@ -636,15 +876,16 @@ internal fun FinanceHeroSummaryCard(
     var showAddMenu by remember { mutableStateOf(false) }
 
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            if (showTopActions) {
             // Top bar: Active Period Pill on left + Single Sync & [+] Menu on right
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -792,6 +1033,7 @@ internal fun FinanceHeroSummaryCard(
                     }
                 }
             }
+            }
 
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
@@ -882,48 +1124,39 @@ internal fun FinanceHeroSummaryCard(
 
             val balances = summary.bankBreakdowns.filter { it.latestBalance != null }
             if (balances.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "LATEST BANK BALANCES",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        balances.forEach { b ->
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    balances.forEach { b ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .widthIn(min = 104.dp, max = 164.dp)
-                                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                                ) {
-                                    Text(
-                                        text = BankInstitution.fromCode(b.bankCode).shortBadge.ifBlank { b.bankName },
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        text = FinanceAnalyticsEngine.formatMoney(b.latestBalance!!, b.latestCurrency),
-                                        fontFamily = StudioMonoFontFamily,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
+                                Text(
+                                    text = BankInstitution.fromCode(b.bankCode).shortBadge.ifBlank { b.bankName },
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = FinanceAnalyticsEngine.formatMoney(b.latestBalance!!, b.latestCurrency),
+                                    fontFamily = StudioMonoFontFamily,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
                             }
                         }
                     }
@@ -971,6 +1204,106 @@ internal fun FinanceHeroSummaryCard(
                             Text("Allow", fontSize = 12.sp)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun FinanceLedgerSearchHeader(
+    filterState: FinanceFilterState,
+    onSearchChange: (String) -> Unit,
+    onOpenFilters: () -> Unit,
+    onResetFilters: () -> Unit
+) {
+    val activeFilterCount = remember(filterState) {
+        var count = 0
+        if (filterState.periodMode != FinancePeriodMode.ALL) count++
+        if (filterState.timePreset != TimeOfDayPreset.ANY) count++
+        if (filterState.selectedBankCode != "ALL") count++
+        if (filterState.typeFilter != "ALL") count++
+        count
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = filterState.searchQuery,
+                onValueChange = onSearchChange,
+                placeholder = {
+                    Text(
+                        "Search merchant, bank, reference...",
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                trailingIcon = {
+                    if (filterState.searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { onSearchChange("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("finance_search_input")
+            )
+
+            FilledTonalButton(
+                onClick = onOpenFilters,
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                modifier = Modifier
+                    .height(52.dp)
+                    .testTag("finance_ledger_filter_btn")
+            ) {
+                Icon(Icons.Default.Tune, contentDescription = "Open Filters", modifier = Modifier.size(17.dp))
+                if (activeFilterCount > 0) {
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(activeFilterCount.toString(), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        if (activeFilterCount > 0) {
+            val summaryText = buildList {
+                if (filterState.periodMode != FinancePeriodMode.ALL) add(filterState.periodMode.label)
+                if (filterState.selectedBankCode != "ALL") add(BankInstitution.fromCode(filterState.selectedBankCode).shortBadge)
+                if (filterState.typeFilter == "INCOME") add("Income")
+                if (filterState.typeFilter == "EXPENSE") add("Outflow")
+                if (filterState.timePreset != TimeOfDayPreset.ANY) add("Time window")
+            }.joinToString(" · ")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Filtered: $summaryText",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onResetFilters,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("Reset", fontSize = 11.sp)
                 }
             }
         }

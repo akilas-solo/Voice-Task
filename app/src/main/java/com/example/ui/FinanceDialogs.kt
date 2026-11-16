@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -16,6 +17,9 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.FilterAltOff
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,6 +34,7 @@ import com.example.data.BankInstitution
 import com.example.data.BankSmsParser
 import com.example.data.FinanceAnalyticsEngine
 import com.example.data.FinanceFilterState
+import com.example.data.FinancePeriodMode
 import com.example.data.FinanceTransaction
 import com.example.data.TimeOfDayPreset
 import com.example.data.TransactionType
@@ -38,6 +43,7 @@ import com.example.ui.theme.StudioMonoFontFamily
 import com.example.ui.theme.StudioSuccess
 import java.text.DateFormatSymbols
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -566,4 +572,244 @@ internal fun TransactionDetailDialog(
             ) { Text("Delete") }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun FinanceFilterBottomSheet(
+    filterState: FinanceFilterState,
+    filteredCount: Int,
+    onDismiss: () -> Unit,
+    onSelectPeriod: (FinancePeriodMode) -> Unit,
+    onOpenTimeWindow: () -> Unit,
+    onSelectBank: (String) -> Unit,
+    onSelectType: (String) -> Unit,
+    onResetAll: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val activeCount = remember(filterState) {
+        var count = 0
+        if (filterState.periodMode != FinancePeriodMode.ALL) count++
+        if (filterState.timePreset != TimeOfDayPreset.ANY) count++
+        if (filterState.selectedBankCode != "ALL") count++
+        if (filterState.typeFilter != "ALL") count++
+        count
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.testTag("finance_filter_bottom_sheet")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Filter Transactions",
+                        fontFamily = FrauncesFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 20.sp
+                    )
+                    if (activeCount > 0) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                text = activeCount.toString(),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (activeCount > 0 || filterState.searchQuery.isNotBlank()) {
+                    TextButton(
+                        onClick = onResetAll,
+                        modifier = Modifier.testTag("finance_filter_sheet_reset_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FilterAltOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Reset")
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "DATE PERIOD",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.7.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FinancePeriodMode.entries.forEach { mode ->
+                        val label = when (mode) {
+                            FinancePeriodMode.SPECIFIC_DAY -> {
+                                if (filterState.periodMode == FinancePeriodMode.SPECIFIC_DAY && filterState.selectedDayMillis != null) {
+                                    SimpleDateFormat("MMM dd", Locale.ENGLISH).format(Date(filterState.selectedDayMillis))
+                                } else "Pick Day"
+                            }
+                            FinancePeriodMode.SPECIFIC_MONTH -> {
+                                if (filterState.periodMode == FinancePeriodMode.SPECIFIC_MONTH && filterState.selectedMonthZeroBased != null) {
+                                    val cal = Calendar.getInstance().apply {
+                                        set(Calendar.YEAR, filterState.selectedYear ?: get(Calendar.YEAR))
+                                        set(Calendar.MONTH, filterState.selectedMonthZeroBased)
+                                    }
+                                    SimpleDateFormat("MMM yyyy", Locale.ENGLISH).format(cal.time)
+                                } else "Pick Month"
+                            }
+                            else -> mode.label
+                        }
+                        BotanicalFilterChip(
+                            label = label,
+                            selected = filterState.periodMode == mode,
+                            onClick = { onSelectPeriod(mode) }
+                        )
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "TIME OF DAY",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.7.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val timeLabel = if (filterState.timePreset == TimeOfDayPreset.ANY) {
+                    "Any Time Window"
+                } else if (filterState.timePreset == TimeOfDayPreset.CUSTOM) {
+                    String.format(
+                        Locale.ENGLISH,
+                        "%02d:%02d – %02d:%02d",
+                        filterState.customStartHour,
+                        filterState.customStartMinute,
+                        filterState.customEndHour,
+                        filterState.customEndMinute
+                    )
+                } else {
+                    filterState.timePreset.name.lowercase(Locale.ENGLISH)
+                        .replaceFirstChar { it.uppercaseChar() }
+                }
+                OutlinedButton(
+                    onClick = onOpenTimeWindow,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(timeLabel, modifier = Modifier.weight(1f))
+                    Text("Change", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "BANK / WALLET",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.7.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val bankChips = listOf(
+                        "ALL" to "All Banks",
+                        BankInstitution.TELEBIRR.code to "Telebirr",
+                        BankInstitution.CBE.code to "CBE",
+                        BankInstitution.BOA.code to "Abyssinia",
+                        BankInstitution.CBE_BIRR.code to "CBE Birr",
+                        BankInstitution.AWASH.code to "Awash",
+                        BankInstitution.DASHEN.code to "Dashen",
+                        BankInstitution.OTHER.code to "Other"
+                    )
+                    bankChips.forEach { (code, title) ->
+                        BotanicalFilterChip(
+                            label = title,
+                            selected = filterState.selectedBankCode == code,
+                            onClick = { onSelectBank(code) }
+                        )
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "TRANSACTION FLOW",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.7.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("ALL" to "All Types", "INCOME" to "Income", "EXPENSE" to "Outflow").forEach { (key, title) ->
+                        BotanicalFilterChip(
+                            label = title,
+                            selected = filterState.typeFilter == key,
+                            onClick = { onSelectType(key) }
+                        )
+                    }
+                }
+            }
+
+            Button(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("finance_filter_sheet_apply_btn")
+            ) {
+                Text(
+                    text = "Show $filteredCount Transaction${if (filteredCount == 1) "" else "s"}",
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
 }

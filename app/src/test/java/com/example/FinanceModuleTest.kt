@@ -17,6 +17,10 @@ import com.example.data.VoiceTaskRepository
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -24,9 +28,13 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import com.example.data.FinanceSummary
+import com.example.ui.CompactFinanceActionBar
+import com.example.ui.FinanceFilterBottomSheet
 import com.example.ui.FinanceFilterPanel
 import com.example.ui.FinanceHeroSummaryCard
+import com.example.ui.FinanceLedgerSearchHeader
 import com.example.ui.FinanceOverviewComposable
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.test.runTest
@@ -668,5 +676,84 @@ class FinanceModuleTest {
         composeTestRule.onNodeWithText("BANK / WALLET")
             .performScrollTo()
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun `compact action bar opens filter bottom sheet and ledger header updates search`() {
+        composeTestRule.setContent {
+            var filterState by remember { mutableStateOf(FinanceFilterState()) }
+            var showFilterSheet by remember { mutableStateOf(false) }
+
+            MyApplicationTheme(darkTheme = false) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    CompactFinanceActionBar(
+                        periodLabel = "All Time",
+                        filterState = filterState,
+                        isScanning = false,
+                        hasAnyData = true,
+                        hasSmsPermission = true,
+                        onScanSmsClick = {},
+                        onOpenFilters = { showFilterSheet = true },
+                        onPasteSmsClick = {},
+                        onImportFileClick = {},
+                        onManualAddClick = {},
+                        onResetFilters = { filterState = FinanceFilterState() },
+                        onClearAllClick = {}
+                    )
+                    FinanceHeroSummaryCard(
+                        summary = FinanceSummary(
+                            transactionCount = 2,
+                            totalIncome = 5000.0,
+                            totalOutflow = 1200.0,
+                            netFlow = 3800.0
+                        ),
+                        filterState = filterState,
+                        isScanning = false,
+                        hasAnyData = true,
+                        hasSmsPermission = true,
+                        showTopActions = false,
+                        onScanSmsClick = {},
+                        onPasteSmsClick = {},
+                        onImportFileClick = {},
+                        onManualAddClick = {},
+                        onResetFilters = {},
+                        onClearAllClick = {}
+                    )
+                    FinanceLedgerSearchHeader(
+                        filterState = filterState,
+                        onSearchChange = { filterState = filterState.copy(searchQuery = it) },
+                        onOpenFilters = { showFilterSheet = true },
+                        onResetFilters = { filterState = FinanceFilterState() }
+                    )
+                    if (showFilterSheet) {
+                        FinanceFilterBottomSheet(
+                            filterState = filterState,
+                            filteredCount = 2,
+                            onDismiss = { showFilterSheet = false },
+                            onSelectPeriod = { filterState = filterState.copy(periodMode = it) },
+                            onOpenTimeWindow = {},
+                            onSelectBank = { filterState = filterState.copy(selectedBankCode = it) },
+                            onSelectType = { filterState = filterState.copy(typeFilter = it) },
+                            onResetAll = { filterState = FinanceFilterState() }
+                        )
+                    }
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("finance_compact_action_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_open_filters_btn").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Filter Transactions").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Telebirr").performClick()
+        composeTestRule.onNodeWithTag("finance_filter_sheet_apply_btn").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Filtered: Telebirr").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("finance_search_input").performTextInput("Abebe")
+        composeTestRule.onNodeWithText("Abebe").assertIsDisplayed()
     }
 }
