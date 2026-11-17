@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -631,7 +632,8 @@ internal fun CompactFinanceActionBar(
     onImportFileClick: () -> Unit,
     onManualAddClick: () -> Unit,
     onResetFilters: () -> Unit,
-    onClearAllClick: () -> Unit
+    onClearAllClick: () -> Unit,
+    onSendTelegramSummary: (() -> Unit)? = null
 ) {
     val activeFilterCount = remember(filterState) {
         var count = 0
@@ -828,6 +830,17 @@ internal fun CompactFinanceActionBar(
                         },
                         modifier = Modifier.testTag("finance_menu_scan_sms")
                     )
+                    if (hasAnyData && onSendTelegramSummary != null) {
+                        DropdownMenuItem(
+                            text = { Text("Send Summary to Telegram") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null) },
+                            onClick = {
+                                showAddMenu = false
+                                onSendTelegramSummary()
+                            },
+                            modifier = Modifier.testTag("finance_menu_send_telegram")
+                        )
+                    }
                     if (hasAnyData) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                         DropdownMenuItem(

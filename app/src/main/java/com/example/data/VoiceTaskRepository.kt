@@ -60,14 +60,22 @@ class VoiceTaskRepository(private val voiceTaskDao: VoiceTaskDao) {
     suspend fun insertFinanceTransaction(tx: FinanceTransaction): Long = voiceTaskDao.insertFinanceTransaction(tx)
 
     suspend fun insertFinanceTransactionsDedup(list: List<FinanceTransaction>): Int {
-        if (list.isEmpty()) return 0
+        return insertFinanceTransactionsDedupReturningInserted(list).size
+    }
+
+    suspend fun insertFinanceTransactionsDedupReturningInserted(list: List<FinanceTransaction>): List<FinanceTransaction> {
+        if (list.isEmpty()) return emptyList()
         val distinct = list.distinctBy { it.smsFingerprint }
-        var insertedCount = 0
+        val insertedItems = mutableListOf<FinanceTransaction>()
         distinct.chunked(200).forEach { chunk ->
             val results = voiceTaskDao.insertFinanceTransactions(chunk)
-            insertedCount += results.count { it > 0L }
+            results.forEachIndexed { idx, rowId ->
+                if (rowId > 0L) {
+                    insertedItems.add(chunk[idx])
+                }
+            }
         }
-        return insertedCount
+        return insertedItems
     }
 
     suspend fun updateFinanceTransaction(tx: FinanceTransaction) = voiceTaskDao.updateFinanceTransaction(tx)

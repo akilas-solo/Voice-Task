@@ -429,7 +429,12 @@ fun FinanceScreen(
                 onImportFileClick = openBackupImporter,
                 onManualAddClick = { showManualTxDialog = true },
                 onResetFilters = { viewModel.resetFinanceFilters() },
-                onClearAllClick = { showClearConfirm = true }
+                onClearAllClick = { showClearConfirm = true },
+                onSendTelegramSummary = {
+                    viewModel.sendFinanceSummaryToTelegram { _, msg ->
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    }
+                }
             )
         }
 

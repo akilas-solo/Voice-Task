@@ -51,6 +51,7 @@ import com.example.data.TelegramConfig
 import com.example.data.TelegramPrefs
 import com.example.data.TelegramResult
 import com.example.data.TelegramSyncManager
+import com.example.data.TelegramTokenSource
 import com.example.data.TimeOfDayPreset
 import com.example.data.TransactionType
 import com.example.data.VoiceTask
@@ -468,10 +469,12 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                 financeStatusIsError = true
                 return@launch
             }
-            val inserted = repository.insertFinanceTransactionsDedup(parsed)
+            val insertedItems = repository.insertFinanceTransactionsDedupReturningInserted(parsed)
+            val inserted = insertedItems.size
             val banksList = parsed.map { it.bankName }.distinct().take(4).joinToString(", ")
             val catsList = parsed.map { it.category }.distinct().take(3).joinToString(", ")
             financeStatusMessage = if (inserted > 0) {
+                dispatchFinanceImportTelegramAlert(insertedItems, "Shared SMS")
                 "Imported $inserted shared bank alert(s) ($banksList · Suggested: $catsList)."
             } else {
                 "Shared bank alert (${parsed.first().bankName}) is already in your Finance ledger."
@@ -511,10 +514,12 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                     ?: "Inspected $totalInspected record(s) (${formats.joinToString(", ")}) — no supported bank SMS alerts found."
                 financeStatusIsError = true
             } else {
-                val inserted = repository.insertFinanceTransactionsDedup(allParsed)
+                val insertedItems = repository.insertFinanceTransactionsDedupReturningInserted(allParsed)
+                val inserted = insertedItems.size
                 val banksList = allParsed.map { it.bankName }.distinct().take(4).joinToString(", ")
                 val catsList = allParsed.map { it.category }.distinct().take(3).joinToString(", ")
                 financeStatusMessage = if (inserted > 0) {
+                    dispatchFinanceImportTelegramAlert(insertedItems, formats.joinToString("/").ifBlank { "SMS Backup" })
                     "Imported $inserted new transaction(s) from ${formats.joinToString("/")} ($banksList · Suggested: $catsList)."
                 } else {
                     "Verified ${allParsed.size} alert(s) in backup file — all already in your Finance ledger."
@@ -616,10 +621,14 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                         financeStatusIsError = true
                     }
                 } else {
-                    val newlyInserted = withContext(Dispatchers.IO) {
-                        repository.insertFinanceTransactionsDedup(result.parsedTransactions)
+                    val insertedItems = withContext(Dispatchers.IO) {
+                        repository.insertFinanceTransactionsDedupReturningInserted(result.parsedTransactions)
                     }
+                    val newlyInserted = insertedItems.size
                     lastAutoScanCompletedAtMs = System.currentTimeMillis()
+                    if (newlyInserted > 0) {
+                        dispatchFinanceImportTelegramAlert(insertedItems, "SMS Inbox Scan")
+                    }
                     if (!silent || newlyInserted > 0) {
                         val banksList = result.parsedTransactions.map { it.bankName }.distinct().take(4).joinToString(", ")
                         val catsList = result.parsedTransactions.map { it.category }.distinct().take(3).joinToString(", ")
@@ -668,9 +677,11 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
             } else {
                 parsedRaw
             }
-            val inserted = repository.insertFinanceTransactionsDedup(parsed)
+            val insertedItems = repository.insertFinanceTransactionsDedupReturningInserted(parsed)
+            val inserted = insertedItems.size
             val catsList = parsed.map { it.category }.distinct().take(3).joinToString(", ")
             val msg = if (inserted > 0) {
+                dispatchFinanceImportTelegramAlert(insertedItems, senderHint.ifBlank { "Manual SMS" })
                 "Imported $inserted transaction(s) (${parsed.joinToString(", ") { it.bankName }} · Categorized: $catsList)."
             } else {
                 "This SMS transaction is already in your Finance ledger."
@@ -713,6 +724,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                 source = "MANUAL_ENTRY"
             )
             repository.insertFinanceTransaction(tx)
+            dispatchFinanceImportTelegramAlert(listOf(tx), "Manual Entry")
             financeStatusMessage = "Added ${tx.bankName} ${FinanceAnalyticsEngine.formatMoney(tx.amount)}"
             financeStatusIsError = false
             onDone(true, "Transaction added.")
@@ -1532,7 +1544,7 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
                         is ConnectorResult.Error -> false to res.reason
                     }
                 }
-                TelegramSyncManager.isBotConfigured() && tgConfig.isVerified -> {
+                TelegramSyncManager.resolveBotToken(tgConfig.customBotToken).first.isNotEmpty() && tgConfig.isVerified -> {
                     when (
                         val tgRes = TelegramSyncManager.sendCustomMessage(
                             context = appCtx,
@@ -1594,9 +1606,13 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
         initialValue = emptyList()
     )
 
+    var isTelegramTokenSaving by mutableStateOf(false)
+        private set
     var isTelegramVerifying by mutableStateOf(false)
         private set
     var isTelegramSyncing by mutableStateOf(false)
+        private set
+    var isSendingFinanceTelegram by mutableStateOf(false)
         private set
     var sendingTaskIds by mutableStateOf<Set<Int>>(emptySet())
         private set
@@ -1609,8 +1625,12 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     var pendingTelegramDeepLink by mutableStateOf<String?>(null)
         private set
 
+    fun getTelegramTokenSource(config: TelegramConfig = telegramConfig.value): TelegramTokenSource {
+        return TelegramSyncManager.resolveBotToken(config.customBotToken).second
+    }
+
     val isTelegramBotTokenConfigured: Boolean
-        get() = TelegramSyncManager.isBotConfigured()
+        get() = TelegramSyncManager.resolveBotToken(telegramConfig.value.customBotToken).first.isNotEmpty()
 
     private var verificationPollJob: Job? = null
 
@@ -1802,6 +1822,87 @@ class VoiceTaskViewModel(application: Application) : AndroidViewModel(applicatio
     fun setAiTelegramCommandsEnabled(enabled: Boolean) {
         viewModelScope.launch {
             telegramPrefs.setAiTelegramCommandsEnabled(enabled)
+        }
+    }
+
+    fun setAutoSendFinanceAlerts(enabled: Boolean) {
+        viewModelScope.launch {
+            telegramPrefs.setAutoSendFinanceAlerts(enabled)
+        }
+    }
+
+    fun saveCustomTelegramBotToken(
+        rawToken: String,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            isTelegramTokenSaving = true
+            telegramStatusMessage = "Verifying BotFather token with Telegram..."
+            telegramStatusIsError = false
+            when (val res = TelegramSyncManager.verifyAndSaveCustomBotToken(getApplication(), rawToken)) {
+                is TelegramResult.Success -> {
+                    verificationPollJob?.cancel()
+                    pendingTelegramDeepLink = null
+                    telegramStatusMessage = res.message
+                    telegramStatusIsError = false
+                    onResult(true, res.message)
+                }
+                is TelegramResult.Error -> {
+                    telegramStatusMessage = res.reason
+                    telegramStatusIsError = true
+                    onResult(false, res.reason)
+                }
+            }
+            isTelegramTokenSaving = false
+        }
+    }
+
+    fun clearCustomTelegramBotToken(onResult: () -> Unit = {}) {
+        viewModelScope.launch {
+            verificationPollJob?.cancel()
+            pendingTelegramDeepLink = null
+            telegramPrefs.clearCustomBotToken()
+            val fallbackSource = if (TelegramSyncManager.isBotConfigured()) {
+                "Custom token removed. Using pre-configured app secret."
+            } else {
+                "Custom BotFather token removed."
+            }
+            telegramStatusMessage = fallbackSource
+            telegramStatusIsError = false
+            onResult()
+        }
+    }
+
+    fun sendFinanceSummaryToTelegram(onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            isSendingFinanceTelegram = true
+            when (val res = TelegramSyncManager.sendFinanceSummary(getApplication())) {
+                is TelegramResult.Success -> {
+                    telegramStatusMessage = res.message
+                    telegramStatusIsError = false
+                    onResult(true, res.message)
+                }
+                is TelegramResult.Error -> {
+                    telegramStatusMessage = res.reason
+                    telegramStatusIsError = true
+                    onResult(false, res.reason)
+                }
+            }
+            isSendingFinanceTelegram = false
+        }
+    }
+
+    private fun dispatchFinanceImportTelegramAlert(
+        inserted: List<FinanceTransaction>,
+        sourceLabel: String
+    ) {
+        if (inserted.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            TelegramSyncManager.sendFinanceImportNotification(
+                context = getApplication(),
+                inserted = inserted,
+                sourceLabel = sourceLabel
+            )
         }
     }
 

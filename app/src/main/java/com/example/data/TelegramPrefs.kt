@@ -20,9 +20,11 @@ data class TelegramConfig(
     val isVerified: Boolean = false,
     val pendingCode: String? = null,
     val botUsername: String? = null,
+    val customBotToken: String = "",
     val autoSendReminders: Boolean = true,
     val includeAudioAttachments: Boolean = true,
     val aiTelegramCommandsEnabled: Boolean = true,
+    val autoSendFinanceAlerts: Boolean = true,
     val lastUpdateOffset: Long = 0L,
     val lastVerifiedAt: Long? = null
 )
@@ -35,9 +37,11 @@ class TelegramPrefs(private val context: Context) {
         val IS_VERIFIED = booleanPreferencesKey("tg_is_verified")
         val PENDING_CODE = stringPreferencesKey("tg_pending_code")
         val BOT_USERNAME = stringPreferencesKey("tg_bot_username")
+        val CUSTOM_BOT_TOKEN = stringPreferencesKey("tg_custom_bot_token")
         val AUTO_SEND_REMINDERS = booleanPreferencesKey("tg_auto_send_reminders")
         val INCLUDE_AUDIO = booleanPreferencesKey("tg_include_audio")
         val AI_TG_COMMANDS = booleanPreferencesKey("tg_ai_commands_enabled")
+        val AUTO_SEND_FINANCE = booleanPreferencesKey("tg_auto_send_finance_alerts")
         val LAST_UPDATE_OFFSET = longPreferencesKey("tg_last_update_offset")
         val LAST_VERIFIED_AT = longPreferencesKey("tg_last_verified_at")
     }
@@ -49,15 +53,55 @@ class TelegramPrefs(private val context: Context) {
             isVerified = prefs[Keys.IS_VERIFIED] ?: false,
             pendingCode = prefs[Keys.PENDING_CODE],
             botUsername = prefs[Keys.BOT_USERNAME],
+            customBotToken = prefs[Keys.CUSTOM_BOT_TOKEN] ?: "",
             autoSendReminders = prefs[Keys.AUTO_SEND_REMINDERS] ?: true,
             includeAudioAttachments = prefs[Keys.INCLUDE_AUDIO] ?: true,
             aiTelegramCommandsEnabled = prefs[Keys.AI_TG_COMMANDS] ?: true,
+            autoSendFinanceAlerts = prefs[Keys.AUTO_SEND_FINANCE] ?: true,
             lastUpdateOffset = prefs[Keys.LAST_UPDATE_OFFSET] ?: 0L,
             lastVerifiedAt = prefs[Keys.LAST_VERIFIED_AT]
         )
     }
 
     suspend fun getConfig(): TelegramConfig = configFlow.first()
+
+    suspend fun saveCustomBotToken(
+        token: String,
+        verifiedBotUsername: String?,
+        resetVerificationIfBotChanged: Boolean = true
+    ) {
+        val cleanToken = token.trim()
+        context.telegramDataStore.edit { prefs ->
+            val oldToken = (prefs[Keys.CUSTOM_BOT_TOKEN] ?: "").trim()
+            val oldBot = (prefs[Keys.BOT_USERNAME] ?: "").trim()
+            val newBot = verifiedBotUsername?.trim().orEmpty()
+            val botChanged = oldToken != cleanToken || (newBot.isNotBlank() && !oldBot.equals(newBot, ignoreCase = true))
+
+            prefs[Keys.CUSTOM_BOT_TOKEN] = cleanToken
+            if (newBot.isNotBlank()) {
+                prefs[Keys.BOT_USERNAME] = newBot
+            }
+            if (resetVerificationIfBotChanged && botChanged) {
+                prefs[Keys.IS_VERIFIED] = false
+                prefs.remove(Keys.CHAT_ID)
+                prefs.remove(Keys.PENDING_CODE)
+                prefs.remove(Keys.LAST_VERIFIED_AT)
+                prefs.remove(Keys.LAST_UPDATE_OFFSET)
+            }
+        }
+    }
+
+    suspend fun clearCustomBotToken() {
+        context.telegramDataStore.edit { prefs ->
+            prefs.remove(Keys.CUSTOM_BOT_TOKEN)
+            prefs.remove(Keys.BOT_USERNAME)
+            prefs[Keys.IS_VERIFIED] = false
+            prefs.remove(Keys.CHAT_ID)
+            prefs.remove(Keys.PENDING_CODE)
+            prefs.remove(Keys.LAST_VERIFIED_AT)
+            prefs.remove(Keys.LAST_UPDATE_OFFSET)
+        }
+    }
 
     suspend fun savePendingVerification(
         username: String,
@@ -83,6 +127,7 @@ class TelegramPrefs(private val context: Context) {
             prefs[Keys.USERNAME] = username
             prefs[Keys.CHAT_ID] = chatId
             prefs[Keys.IS_VERIFIED] = true
+            prefs.remove(Keys.PENDING_CODE)
             prefs[Keys.LAST_VERIFIED_AT] = System.currentTimeMillis()
             if (lastOffset > (prefs[Keys.LAST_UPDATE_OFFSET] ?: 0L)) {
                 prefs[Keys.LAST_UPDATE_OFFSET] = lastOffset
@@ -90,7 +135,6 @@ class TelegramPrefs(private val context: Context) {
             if (!botUsername.isNullOrBlank()) {
                 prefs[Keys.BOT_USERNAME] = botUsername
             }
-            prefs.remove(Keys.PENDING_CODE)
         }
     }
 
@@ -118,6 +162,12 @@ class TelegramPrefs(private val context: Context) {
     suspend fun setAiTelegramCommandsEnabled(enabled: Boolean) {
         context.telegramDataStore.edit { prefs ->
             prefs[Keys.AI_TG_COMMANDS] = enabled
+        }
+    }
+
+    suspend fun setAutoSendFinanceAlerts(enabled: Boolean) {
+        context.telegramDataStore.edit { prefs ->
+            prefs[Keys.AUTO_SEND_FINANCE] = enabled
         }
     }
 

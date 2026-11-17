@@ -30,12 +30,19 @@ data class TelegramSyncSummary(
     val totalProcessed: Int get() = completedCount + snoozedCount + createdCount + tasksListedCount
 }
 
+enum class TelegramTokenSource {
+    IN_APP,
+    BUILD_SECRET,
+    NONE
+}
+
 object TelegramSyncManager {
     private const val TAG = "TelegramSyncManager"
     private const val PLACEHOLDER_TOKEN = "MY_TELEGRAM_BOT_TOKEN"
+    private val BOT_TOKEN_REGEX = Regex("^\\d{6,15}:[A-Za-z0-9_-]{20,}$")
     private val syncMutex = Mutex()
 
-    fun getBotToken(): String {
+    fun getSecretBotToken(): String {
         return try {
             val token = BuildConfig.TELEGRAM_BOT_TOKEN.trim()
             if (token.isBlank() || token == PLACEHOLDER_TOKEN) "" else token
@@ -44,7 +51,32 @@ object TelegramSyncManager {
         }
     }
 
-    fun isBotConfigured(): Boolean = getBotToken().isNotEmpty()
+    fun isValidBotTokenFormat(rawToken: String): Boolean {
+        return BOT_TOKEN_REGEX.matches(rawToken.trim())
+    }
+
+    fun resolveBotToken(customToken: String?): Pair<String, TelegramTokenSource> {
+        val custom = customToken?.trim().orEmpty()
+        if (custom.isNotEmpty()) {
+            return custom to TelegramTokenSource.IN_APP
+        }
+        val secret = getSecretBotToken()
+        if (secret.isNotEmpty()) {
+            return secret to TelegramTokenSource.BUILD_SECRET
+        }
+        return "" to TelegramTokenSource.NONE
+    }
+
+    suspend fun getBotToken(context: Context): String {
+        val custom = runCatching { TelegramPrefs(context).getConfig().customBotToken }.getOrDefault("")
+        return resolveBotToken(custom).first
+    }
+
+    fun getBotToken(): String = getSecretBotToken()
+
+    fun isBotConfigured(): Boolean = getSecretBotToken().isNotEmpty()
+
+    suspend fun isBotConfigured(context: Context): Boolean = getBotToken(context).isNotEmpty()
 
     fun normalizeUsername(raw: String): String {
         return raw.trim().removePrefix("@").trim()
@@ -68,13 +100,47 @@ object TelegramSyncManager {
         return "VT-$suffix"
     }
 
-    suspend fun prepareBotLink(context: Context, rawUsername: String): TelegramResult<String> {
-        val token = getBotToken()
-        if (token.isEmpty()) {
+    private fun missingTokenError(): TelegramResult.Error {
+        return TelegramResult.Error(
+            reason = "No Telegram bot token configured. Paste your @BotFather token in Settings → Connectors or add TELEGRAM_BOT_TOKEN in Secrets.",
+            isTokenMissing = true
+        )
+    }
+
+    suspend fun verifyAndSaveCustomBotToken(context: Context, rawToken: String): TelegramResult<String> {
+        val cleanToken = rawToken.trim()
+        if (!isValidBotTokenFormat(cleanToken)) {
             return TelegramResult.Error(
-                reason = "TELEGRAM_BOT_TOKEN is not configured in AI Studio Secrets.",
-                isTokenMissing = true
+                "Invalid BotFather token format. It should look like 123456789:AAH..."
             )
+        }
+        return try {
+            val meResp = TelegramApiClient.api.getMe(cleanToken)
+            val botUser = meResp.body()?.result
+            val botUsername = botUser?.username
+            if (!meResp.isSuccessful || meResp.body()?.ok != true || botUsername.isNullOrBlank()) {
+                val err = meResp.body()?.description ?: "HTTP ${meResp.code()}"
+                return TelegramResult.Error("Telegram rejected this bot token: $err")
+            }
+            TelegramPrefs(context).saveCustomBotToken(
+                token = cleanToken,
+                verifiedBotUsername = botUsername,
+                resetVerificationIfBotChanged = true
+            )
+            TelegramResult.Success(
+                data = botUsername,
+                message = "Bot @$botUsername verified! Now enter your Telegram @username below to link."
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "verifyAndSaveCustomBotToken error", e)
+            TelegramResult.Error("Network error verifying bot token: ${e.localizedMessage ?: "Unknown"}")
+        }
+    }
+
+    suspend fun prepareBotLink(context: Context, rawUsername: String): TelegramResult<String> {
+        val token = getBotToken(context)
+        if (token.isEmpty()) {
+            return missingTokenError()
         }
 
         val cleanUsername = normalizeUsername(rawUsername)
@@ -107,9 +173,9 @@ object TelegramSyncManager {
     }
 
     suspend fun pollAndVerifyConnection(context: Context): TelegramResult<TelegramConfig> {
-        val token = getBotToken()
+        val token = getBotToken(context)
         if (token.isEmpty()) {
-            return TelegramResult.Error("TELEGRAM_BOT_TOKEN is not configured in AI Studio Secrets.", isTokenMissing = true)
+            return missingTokenError()
         }
 
         val prefs = TelegramPrefs(context)
@@ -178,8 +244,9 @@ object TelegramSyncManager {
                         
                         <b>What you can do:</b>
                         • Receive scheduled reminders &amp; voice memos
+                        • Receive Finance SMS alerts &amp; balance updates
                         • Tap <b>✅ Done</b> or <b>⏰ Snooze</b> directly in chat
-                        • Send <code>/tasks</code> to view active tasks
+                        • Send <code>/tasks</code> or <code>/finance</code> for live status
                         • Send <code>/add Call Alex at 5pm</code> to capture tasks remotely
                         • Send <code>/digest</code> or <code>/ask ...</code> for AI summaries
                     """.trimIndent()
@@ -204,9 +271,9 @@ object TelegramSyncManager {
     }
 
     suspend fun sendTestPing(context: Context): TelegramResult<String> {
-        val token = getBotToken()
+        val token = getBotToken(context)
         if (token.isEmpty()) {
-            return TelegramResult.Error("TELEGRAM_BOT_TOKEN is not configured in AI Studio Secrets.", isTokenMissing = true)
+            return missingTokenError()
         }
         val config = TelegramPrefs(context).getConfig()
         val chatId = config.chatId ?: return TelegramResult.Error("Connect and verify your Telegram account first.")
@@ -258,9 +325,9 @@ object TelegramSyncManager {
         task: VoiceTask,
         isReminder: Boolean
     ): TelegramResult<Long> {
-        val token = getBotToken()
+        val token = getBotToken(context)
         if (token.isEmpty()) {
-            return TelegramResult.Error("TELEGRAM_BOT_TOKEN is not configured in AI Studio Secrets.", isTokenMissing = true)
+            return missingTokenError()
         }
         val config = TelegramPrefs(context).getConfig()
         val chatId = config.chatId
@@ -384,9 +451,9 @@ object TelegramSyncManager {
     }
 
     suspend fun sendNotepadNote(context: Context, note: NotepadNote): TelegramResult<Long> {
-        val token = getBotToken()
+        val token = getBotToken(context)
         if (token.isEmpty()) {
-            return TelegramResult.Error("TELEGRAM_BOT_TOKEN is not configured in AI Studio Secrets.", isTokenMissing = true)
+            return missingTokenError()
         }
         val config = TelegramPrefs(context).getConfig()
         val chatId = config.chatId
@@ -462,9 +529,9 @@ object TelegramSyncManager {
         title: String,
         body: String
     ): TelegramResult<Long> {
-        val token = getBotToken()
+        val token = getBotToken(context)
         if (token.isEmpty()) {
-            return TelegramResult.Error("TELEGRAM_BOT_TOKEN is not configured in AI Studio Secrets.", isTokenMissing = true)
+            return missingTokenError()
         }
         val config = TelegramPrefs(context).getConfig()
         val chatId = config.chatId
@@ -530,10 +597,233 @@ object TelegramSyncManager {
         }
     }
 
-    suspend fun syncIncomingUpdates(context: Context): TelegramResult<TelegramSyncSummary> {
-        val token = getBotToken()
+    internal fun formatFinanceTransactionAlertHtml(tx: FinanceTransaction): String {
+        val emoji = if (tx.isIncoming) "💰" else "💸"
+        val typeLabel = TransactionType.fromString(tx.type).label
+        val signedAmt = FinanceAnalyticsEngine.formatSignedMoney(tx)
+        val dateStr = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault()).format(Date(tx.timestamp))
+        return buildString {
+            append("$emoji <b>Finance Alert · ${escapeHtml(tx.bankName)}</b>\n")
+            append("<b>$signedAmt</b> <i>(${escapeHtml(typeLabel)})</i>\n")
+            if (tx.counterparty.isNotBlank() && !tx.counterparty.equals(tx.bankName, ignoreCase = true)) {
+                append("👤 Counterparty: ${escapeHtml(tx.counterparty)}\n")
+            }
+            append("🏷️ Category: <b>${escapeHtml(tx.category.ifBlank { "Other" })}</b>\n")
+            if (tx.serviceCharge != null && tx.serviceCharge > 0.0) {
+                append("🧾 Fee: ${FinanceAnalyticsEngine.formatMoney(tx.serviceCharge, tx.currency)}\n")
+            }
+            if (tx.balanceAfter != null) {
+                append("🏦 Balance: <b>${FinanceAnalyticsEngine.formatMoney(tx.balanceAfter, tx.currency)}</b>\n")
+            }
+            if (tx.referenceId.isNotBlank()) {
+                append("🔖 Ref: <code>${escapeHtml(tx.referenceId)}</code>\n")
+            }
+            append("🕒 $dateStr")
+        }
+    }
+
+    internal fun formatFinanceBatchSummaryHtml(
+        transactions: List<FinanceTransaction>,
+        sourceLabel: String
+    ): String {
+        val summary = FinanceAnalyticsEngine.summarize(
+            filtered = transactions,
+            allTransactions = transactions,
+            periodLabel = sourceLabel
+        )
+        val cur = summary.primaryCurrency
+        return buildString {
+            append("📥 <b>Finance SMS Import · ${escapeHtml(sourceLabel)}</b>\n")
+            append("Added <b>${transactions.size}</b> new transaction(s).\n\n")
+            append("💰 Inflow: <b>+${FinanceAnalyticsEngine.formatMoney(summary.totalIncome, cur)}</b>\n")
+            append("💸 Outflow: <b>-${FinanceAnalyticsEngine.formatMoney(summary.totalOutflow, cur)}</b>\n")
+            append("📊 Net: <b>${FinanceAnalyticsEngine.formatMoney(summary.netFlow, cur)}</b>\n")
+            if (summary.categoryBreakdowns.isNotEmpty()) {
+                append("\n<b>Top Categories:</b>\n")
+                summary.categoryBreakdowns.take(4).forEach { cat ->
+                    append("• ${escapeHtml(cat.category)}: ${FinanceAnalyticsEngine.formatMoney(cat.totalAmount, cur)} (${cat.count})\n")
+                }
+            }
+            val balances = summary.bankBreakdowns.filter { it.latestBalance != null }
+            if (balances.isNotEmpty()) {
+                append("\n<b>Latest Balances:</b>\n")
+                balances.take(4).forEach { b ->
+                    append("• ${escapeHtml(b.bankName)}: <b>${FinanceAnalyticsEngine.formatMoney(b.latestBalance ?: 0.0, b.latestCurrency)}</b>\n")
+                }
+            }
+        }.trimEnd()
+    }
+
+    internal fun formatFinanceOverviewHtml(transactions: List<FinanceTransaction>): String {
+        if (transactions.isEmpty()) {
+            return "💼 <b>Finance &amp; Task Summary</b>\nNo bank or mobile-money transactions recorded yet."
+        }
+        val monthFilter = FinanceFilterState(periodMode = FinancePeriodMode.SPECIFIC_MONTH)
+        val (monthStart, monthEnd) = FinanceAnalyticsEngine.resolveDateRange(monthFilter)
+        val monthTxs = transactions.filter { tx ->
+            (monthStart == null || tx.timestamp >= monthStart) &&
+                (monthEnd == null || tx.timestamp <= monthEnd)
+        }
+        val useMonth = monthTxs.isNotEmpty()
+        val scopeLabel = if (useMonth) "This Month" else "All Time"
+        val activeSummary = FinanceAnalyticsEngine.summarize(
+            filtered = if (useMonth) monthTxs else transactions,
+            allTransactions = transactions,
+            periodLabel = scopeLabel
+        )
+        val cur = activeSummary.primaryCurrency
+
+        return buildString {
+            append("💼 <b>Finance &amp; Task Ledger ($scopeLabel)</b>\n")
+            append("Transactions: <b>${activeSummary.transactionCount}</b>\n\n")
+            append("💰 Income: <b>+${FinanceAnalyticsEngine.formatMoney(activeSummary.totalIncome, cur)}</b>\n")
+            append("💸 Outflow: <b>-${FinanceAnalyticsEngine.formatMoney(activeSummary.totalOutflow, cur)}</b>\n")
+            append("📊 Net Flow: <b>${FinanceAnalyticsEngine.formatMoney(activeSummary.netFlow, cur)}</b>\n")
+            if (activeSummary.totalFees > 0.0) {
+                append("🧾 Fees: ${FinanceAnalyticsEngine.formatMoney(activeSummary.totalFees, cur)}\n")
+            }
+            if (activeSummary.categoryBreakdowns.isNotEmpty()) {
+                append("\n<b>Top Spending Categories:</b>\n")
+                activeSummary.categoryBreakdowns.take(4).forEach { cat ->
+                    append("• ${escapeHtml(cat.category)}: ${FinanceAnalyticsEngine.formatMoney(cat.totalAmount, cur)}\n")
+                }
+            }
+            val balances = activeSummary.bankBreakdowns.filter { it.latestBalance != null }
+            if (balances.isNotEmpty()) {
+                append("\n<b>Latest Account Balances:</b>\n")
+                balances.take(5).forEach { b ->
+                    append("• ${escapeHtml(b.bankName)}: <b>${FinanceAnalyticsEngine.formatMoney(b.latestBalance ?: 0.0, b.latestCurrency)}</b>\n")
+                }
+            }
+        }.trimEnd()
+    }
+
+    suspend fun sendFinanceImportNotification(
+        context: Context,
+        inserted: List<FinanceTransaction>,
+        sourceLabel: String
+    ): TelegramResult<Int> {
+        if (inserted.isEmpty()) return TelegramResult.Success(0)
+        val token = getBotToken(context)
+        if (token.isEmpty()) return TelegramResult.Success(0)
+        val config = TelegramPrefs(context).getConfig()
+        val chatId = config.chatId
+        if (!config.isVerified || chatId == null || !config.autoSendFinanceAlerts) {
+            return TelegramResult.Success(0)
+        }
+
+        val isBatch = inserted.size >= 2
+        val html = if (isBatch) {
+            formatFinanceBatchSummaryHtml(inserted, sourceLabel)
+        } else {
+            formatFinanceTransactionAlertHtml(inserted.first())
+        }
+        val eventType = if (isBatch) "FINANCE_SUMMARY" else "FINANCE_ALERT"
+        val logTitle = if (isBatch) {
+            "${inserted.size} Finance SMS Imported"
+        } else {
+            val single = inserted.first()
+            "${single.bankName}: ${FinanceAnalyticsEngine.formatSignedMoney(single)}"
+        }
+
+        return try {
+            val resp = TelegramApiClient.api.sendMessage(
+                token = token,
+                request = TgSendMessageRequest(chatId = chatId, text = html)
+            )
+            val db = AppDatabase.getDatabase(context)
+            if (resp.isSuccessful && resp.body()?.ok == true) {
+                db.voiceTaskDao().insertTelegramLog(
+                    TelegramActivityLog(
+                        direction = "OUTBOUND",
+                        eventType = eventType,
+                        title = logTitle,
+                        detail = "Sent to @${config.username} ($sourceLabel)",
+                        status = "SENT"
+                    )
+                )
+                TelegramResult.Success(inserted.size, "Finance alert sent to @${config.username}!")
+            } else {
+                val err = resp.body()?.description ?: "HTTP ${resp.code()}"
+                db.voiceTaskDao().insertTelegramLog(
+                    TelegramActivityLog(
+                        direction = "OUTBOUND",
+                        eventType = eventType,
+                        title = logTitle,
+                        detail = err,
+                        status = "FAILED"
+                    )
+                )
+                TelegramResult.Error("Telegram error: $err")
+            }
+        } catch (e: Exception) {
+            TelegramResult.Error("Network error sending Finance alert: ${e.localizedMessage ?: "Unknown"}")
+        }
+    }
+
+    suspend fun sendFinanceSummary(context: Context): TelegramResult<Long> {
+        val token = getBotToken(context)
         if (token.isEmpty()) {
-            return TelegramResult.Error("TELEGRAM_BOT_TOKEN is not configured in AI Studio Secrets.", isTokenMissing = true)
+            return missingTokenError()
+        }
+        val config = TelegramPrefs(context).getConfig()
+        val chatId = config.chatId
+        if (!config.isVerified || chatId == null) {
+            return TelegramResult.Error("Telegram is not connected yet. Link your username in Settings → Connectors.")
+        }
+
+        val db = AppDatabase.getDatabase(context)
+        val dao = db.voiceTaskDao()
+        val allTxs = dao.getAllFinanceTransactions()
+        val html = formatFinanceOverviewHtml(allTxs)
+
+        return try {
+            val resp = TelegramApiClient.api.sendMessage(
+                token = token,
+                request = TgSendMessageRequest(chatId = chatId, text = html)
+            )
+            val body = resp.body()
+            if (resp.isSuccessful && body?.ok == true && body.result != null) {
+                dao.insertTelegramLog(
+                    TelegramActivityLog(
+                        direction = "OUTBOUND",
+                        eventType = "FINANCE_SUMMARY",
+                        title = "Finance Ledger Summary",
+                        detail = "Sent ${allTxs.size} transaction summary to @${config.username}",
+                        status = "SENT"
+                    )
+                )
+                dao.insertConnectorLog(
+                    ConnectorDispatchLog(
+                        channel = "TELEGRAM",
+                        title = "Finance Ledger Summary",
+                        detail = "Delivered to @${config.username}",
+                        status = "SENT"
+                    )
+                )
+                TelegramResult.Success(body.result.messageId, "Finance summary sent to @${config.username}!")
+            } else {
+                val err = body?.description ?: "HTTP ${resp.code()}"
+                dao.insertTelegramLog(
+                    TelegramActivityLog(
+                        direction = "OUTBOUND",
+                        eventType = "FINANCE_SUMMARY",
+                        title = "Finance Ledger Summary",
+                        detail = err,
+                        status = "FAILED"
+                    )
+                )
+                TelegramResult.Error("Telegram error: $err")
+            }
+        } catch (e: Exception) {
+            TelegramResult.Error("Network error sending Finance summary: ${e.localizedMessage ?: "Unknown"}")
+        }
+    }
+
+    suspend fun syncIncomingUpdates(context: Context): TelegramResult<TelegramSyncSummary> {
+        val token = getBotToken(context)
+        if (token.isEmpty()) {
+            return missingTokenError()
         }
         val prefs = TelegramPrefs(context)
         val config = prefs.getConfig()
@@ -812,6 +1102,26 @@ object TelegramSyncManager {
                                     }
                                 }
                             }
+                            text.startsWith("/finance", ignoreCase = true) -> {
+                                val txs = dao.getAllFinanceTransactions()
+                                val reply = formatFinanceOverviewHtml(txs)
+                                runCatching {
+                                    TelegramApiClient.api.sendMessage(
+                                        token = token,
+                                        request = TgSendMessageRequest(chatId = verifiedChatId, text = reply)
+                                    )
+                                }
+                                dao.insertTelegramLog(
+                                    TelegramActivityLog(
+                                        direction = "INBOUND",
+                                        eventType = "FINANCE_QUERY_TG",
+                                        title = "/finance command",
+                                        detail = "Replied with ${txs.size}-tx finance summary",
+                                        status = "SYNCED"
+                                    )
+                                )
+                                tasksListedCount++
+                            }
                             text.startsWith("/help", ignoreCase = true) -> {
                                 runCatching {
                                     TelegramApiClient.api.sendMessage(
@@ -821,6 +1131,7 @@ object TelegramSyncManager {
                                             text = """
                                                 <b>🌿 Finance &amp; Task Bot Commands</b>
                                                 • <code>/tasks</code> — List active tasks
+                                                • <code>/finance</code> — Monthly cashflow &amp; bank balances
                                                 • <code>/add Buy studio mic</code> — Add task to Inbox
                                                 • <code>/digest</code> — AI daily digest of tasks &amp; notes
                                                 • <code>/ask your question</code> — Ask AI across saved memos
